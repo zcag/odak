@@ -1,5 +1,4 @@
 bin/
 web/node_modules/
-web/dist/
 deploy/odak.service
 *.lock

@@ -10,13 +10,12 @@ _REV   := $(shell git rev-list $(_TAG)..HEAD --count 2>/dev/null || git rev-list
 _HASH  := $(shell git rev-parse --short HEAD 2>/dev/null || echo pre)
 _DIRTY := $(shell git diff --quiet && git diff --cached --quiet || echo +dirty)
 VERSION := $(if $(_TAG),$(_TAG)+$(_REV)-$(_HASH)$(_DIRTY),v0+$(_REV)-$(_HASH)$(_DIRTY))
-LDFLAGS   := -ldflags "-s -w -X main.Version=$(VERSION)"
-TAGS_UI   := -tags ui
+LDFLAGS := -ldflags "-s -w -X main.Version=$(VERSION)"
 
 .PHONY: build web-build build-archer deploy install-service logs status restart clean
 
 build: web-build
-	go build $(TAGS_UI) $(LDFLAGS) -o bin/$(BINARY) .
+	go build $(LDFLAGS) -o bin/$(BINARY) .
 	@mkdir -p $(INSTALL_DIR)
 	@cp bin/$(BINARY) $(INSTALL_DIR)/$(BINARY)
 	@echo "installed $(INSTALL_DIR)/$(BINARY)  [$(VERSION)]"
@@ -25,10 +24,10 @@ web-build:
 	cd web && npm install --silent && npm run build
 
 build-archer:
-	GOOS=linux GOARCH=amd64 go build $(TAGS_UI) $(LDFLAGS) -o bin/$(BINARY)-linux .
+	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY)-linux .
 
 deploy: web-build build-archer
-	go build $(TAGS_UI) $(LDFLAGS) -o bin/$(BINARY) .
+	go build $(LDFLAGS) -o bin/$(BINARY) .
 	@mkdir -p $(INSTALL_DIR)
 	@cp bin/$(BINARY) $(INSTALL_DIR)/$(BINARY)
 	ssh $(ARCHER_USER)@$(ARCHER) "mkdir -p $(REMOTE_DIR)"

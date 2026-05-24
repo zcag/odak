@@ -22,28 +22,24 @@ Comes with a REST API, a real-time web UI, and a terminal interface — all read
 
 ## Installation
 
-### CLI / TUI
-
 ```sh
 go install github.com/zcag/odak@latest
 ```
 
-This gives you the command-line client and terminal UI. Point it at a running odak server with `~/.config/odak/client`:
+Installs the full binary — CLI, TUI, and REST server with embedded web UI. Point the client at a running server with `~/.config/odak/client`:
 
 ```
 endpoint=http://your-server:8761
 token=your-api-key
 ```
 
-### Full server (with embedded web UI)
-
-Requires cloning and building — the web UI is compiled and embedded at build time.
+### Build from source
 
 ```sh
 git clone https://github.com/zcag/odak
 cd odak
 make build        # local binary → ~/.local/bin/odak
-make deploy       # cross-compile + push to archer via rsync + systemd restart
+make deploy       # cross-compile + push to server via rsync + systemd restart
 ```
 
 ---
