@@ -10,7 +10,7 @@ _REV   := $(shell git rev-list $(_TAG)..HEAD --count 2>/dev/null || git rev-list
 _HASH  := $(shell git rev-parse --short HEAD 2>/dev/null || echo pre)
 _DIRTY := $(shell git diff --quiet && git diff --cached --quiet || echo +dirty)
 VERSION := $(if $(_TAG),$(_TAG)+$(_REV)-$(_HASH)$(_DIRTY),v0+$(_REV)-$(_HASH)$(_DIRTY))
-LDFLAGS := -ldflags "-X main.Version=$(VERSION)"
+LDFLAGS := -ldflags "-s -w -X main.Version=$(VERSION)"
 
 .PHONY: build web-build build-archer deploy install-service logs status restart clean
 
