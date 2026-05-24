@@ -139,6 +139,18 @@ func (c *Client) Sections() ([]SectionInfo, error) {
 	return decode[[]SectionInfo](resp)
 }
 
+func (c *Client) Reorder(section string, ids []string) error {
+	resp, err := c.do("POST", "/todos/reorder", map[string]any{"section": section, "ids": ids})
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 204 {
+		return fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	return nil
+}
+
 func (c *Client) GetRaw() (string, error) {
 	resp, err := c.do("GET", "/raw", nil)
 	if err != nil {

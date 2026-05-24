@@ -177,12 +177,17 @@ The server reads client config from the same env vars / `~/.config/odak/client` 
 
 | Tool | Description |
 |------|-------------|
-| `list_todos` | List items, optionally filtered by `section` or `tag` |
-| `add_todo` | Add item with optional `section`, `tags`, `urgent`, `deadline` |
+| `list_todos` | List items, optionally filtered by `section`, `tag`, or `parent_id` |
+| `get_todo` | Get a single item by `id` |
+| `add_todo` | Add item with optional `section`, `tags`, `urgent`, `deadline`, `trigger`, `parent_id` |
+| `edit_todo` | Update any field of an existing item |
 | `toggle_done` | Toggle done state by `id` |
 | `delete_todo` | Delete item by `id` |
 | `move_todo` | Move item to a different section |
+| `reorder_todos` | Reorder items within a section by providing ordered `ids` |
 | `list_sections` | List sections with item counts |
+| `get_raw` | Get the raw Markdown content of the file |
+| `put_raw` | Overwrite the entire file with raw Markdown |
 
 ---
 

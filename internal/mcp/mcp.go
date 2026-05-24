@@ -34,7 +34,6 @@ func errResp(enc *json.Encoder, id any, code int, text string) {
 	enc.Encode(msg{JSONRPC: "2.0", ID: id, Error: &rpcErr{Code: code, Message: text}})
 }
 
-// tool descriptor for initialize response
 type toolDef struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
@@ -44,12 +43,24 @@ type toolDef struct {
 var tools = []toolDef{
 	{
 		Name:        "list_todos",
-		Description: "List todo items, optionally filtered by section or tag.",
+		Description: "List todo items, optionally filtered by section, tag, or parent_id.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"section": map[string]any{"type": "string", "description": "Filter by section name (e.g. Focus, Inbox)"},
-				"tag":     map[string]any{"type": "string", "description": "Filter by tag"},
+				"section":   map[string]any{"type": "string", "description": "Filter by section name (e.g. Focus, Inbox)"},
+				"tag":       map[string]any{"type": "string", "description": "Filter by tag"},
+				"parent_id": map[string]any{"type": "string", "description": "Filter by parent item ID (returns children only)"},
+			},
+		},
+	},
+	{
+		Name:        "get_todo",
+		Description: "Get a single todo item by ID.",
+		InputSchema: map[string]any{
+			"type":     "object",
+			"required": []string{"id"},
+			"properties": map[string]any{
+				"id": map[string]any{"type": "string", "description": "Item ID"},
 			},
 		},
 	},
@@ -60,11 +71,30 @@ var tools = []toolDef{
 			"type":     "object",
 			"required": []string{"text"},
 			"properties": map[string]any{
-				"text":     map[string]any{"type": "string", "description": "Todo text"},
-				"section":  map[string]any{"type": "string", "description": "Section to add to (default: Inbox)"},
-				"urgent":   map[string]any{"type": "boolean", "description": "Mark as urgent"},
-				"deadline": map[string]any{"type": "string", "description": "Deadline date (YYYY-MM-DD)"},
-				"tags":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tags"},
+				"text":      map[string]any{"type": "string", "description": "Todo text"},
+				"section":   map[string]any{"type": "string", "description": "Section to add to (default: Inbox)"},
+				"urgent":    map[string]any{"type": "boolean", "description": "Mark as urgent"},
+				"deadline":  map[string]any{"type": "string", "description": "Deadline date (YYYY-MM-DD)"},
+				"trigger":   map[string]any{"type": "string", "description": "Wait/trigger date (YYYY-MM-DD)"},
+				"tags":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tags"},
+				"parent_id": map[string]any{"type": "string", "description": "Parent item ID (creates a sub-item)"},
+			},
+		},
+	},
+	{
+		Name:        "edit_todo",
+		Description: "Update fields of an existing todo item. Only provided fields are changed.",
+		InputSchema: map[string]any{
+			"type":     "object",
+			"required": []string{"id"},
+			"properties": map[string]any{
+				"id":        map[string]any{"type": "string", "description": "Item ID"},
+				"text":      map[string]any{"type": "string", "description": "New text"},
+				"urgent":    map[string]any{"type": "boolean", "description": "Mark as urgent"},
+				"deadline":  map[string]any{"type": "string", "description": "Deadline date (YYYY-MM-DD), empty string to clear"},
+				"trigger":   map[string]any{"type": "string", "description": "Wait/trigger date (YYYY-MM-DD), empty string to clear"},
+				"tags":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Replace tags list"},
+				"parent_id": map[string]any{"type": "string", "description": "Re-parent to this item ID, empty string to make top-level"},
 			},
 		},
 	},
@@ -103,9 +133,37 @@ var tools = []toolDef{
 		},
 	},
 	{
+		Name:        "reorder_todos",
+		Description: "Reorder items within a section by providing the full ordered list of IDs.",
+		InputSchema: map[string]any{
+			"type":     "object",
+			"required": []string{"section", "ids"},
+			"properties": map[string]any{
+				"section": map[string]any{"type": "string", "description": "Section name"},
+				"ids":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Item IDs in desired order"},
+			},
+		},
+	},
+	{
 		Name:        "list_sections",
 		Description: "List all sections with their item counts.",
 		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		Name:        "get_raw",
+		Description: "Get the raw Markdown content of the todos file.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
+	{
+		Name:        "put_raw",
+		Description: "Overwrite the entire todos file with raw Markdown content.",
+		InputSchema: map[string]any{
+			"type":     "object",
+			"required": []string{"content"},
+			"properties": map[string]any{
+				"content": map[string]any{"type": "string", "description": "Full Markdown content to write"},
+			},
+		},
 	},
 }
 
@@ -118,15 +176,30 @@ func jsonText(v any) any {
 	return text(string(b))
 }
 
+func strSlice(v any) []string {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(arr))
+	for _, a := range arr {
+		if s, ok := a.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
 func handle(enc *json.Encoder, c *client.Client, req msg) {
+	// parse params: tools/call wraps args in {"name":..., "arguments":{...}}
+	var callParams struct {
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments"`
+	}
 	params := map[string]any{}
 	if len(req.Params) > 0 {
-		// params may be {"arguments": {...}} (tools/call) or flat
-		var wrap struct {
-			Arguments map[string]any `json:"arguments"`
-		}
-		if err := json.Unmarshal(req.Params, &wrap); err == nil && wrap.Arguments != nil {
-			params = wrap.Arguments
+		if err := json.Unmarshal(req.Params, &callParams); err == nil && callParams.Arguments != nil {
+			params = callParams.Arguments
 		} else {
 			json.Unmarshal(req.Params, &params)
 		}
@@ -140,6 +213,7 @@ func handle(enc *json.Encoder, c *client.Client, req msg) {
 		}
 		return ""
 	}
+	has := func(k string) bool { _, ok := params[k]; return ok }
 
 	switch req.Method {
 	case "initialize":
@@ -150,40 +224,41 @@ func handle(enc *json.Encoder, c *client.Client, req msg) {
 		})
 
 	case "notifications/initialized":
-		// no response needed
+		// no response
 
 	case "tools/list":
 		respond(enc, req.ID, map[string]any{"tools": tools})
 
 	case "tools/call":
-		name := str("name")
-		// re-parse params to get arguments separately
-		var callParams struct {
-			Name      string         `json:"name"`
-			Arguments map[string]any `json:"arguments"`
-		}
-		if len(req.Params) > 0 {
-			json.Unmarshal(req.Params, &callParams)
-			name = callParams.Name
-			if callParams.Arguments != nil {
-				params = callParams.Arguments
-			}
+		name := callParams.Name
+		if name == "" {
+			name = str("name")
 		}
 
 		switch name {
 		case "list_todos":
-			items, err := c.List(str("section"), str("tag"), "")
+			items, err := c.List(str("section"), str("tag"), str("parent_id"))
 			if err != nil {
 				errResp(enc, req.ID, -32000, err.Error())
 				return
 			}
 			respond(enc, req.ID, jsonText(items))
 
+		case "get_todo":
+			item, err := c.Get(str("id"))
+			if err != nil {
+				errResp(enc, req.ID, -32000, err.Error())
+				return
+			}
+			respond(enc, req.ID, jsonText(item))
+
 		case "add_todo":
 			item := &model.Item{
 				Text:     str("text"),
 				Section:  str("section"),
 				Deadline: str("deadline"),
+				Trigger:  str("trigger"),
+				ParentID: str("parent_id"),
 			}
 			if item.Section == "" {
 				item.Section = "Inbox"
@@ -191,19 +266,40 @@ func handle(enc *json.Encoder, c *client.Client, req msg) {
 			if u, ok := params["urgent"].(bool); ok {
 				item.Urgent = u
 			}
-			if tags, ok := params["tags"].([]any); ok {
-				for _, t := range tags {
-					if s, ok := t.(string); ok {
-						item.Tags = append(item.Tags, s)
-					}
-				}
-			}
+			item.Tags = strSlice(params["tags"])
 			created, err := c.Create(item)
 			if err != nil {
 				errResp(enc, req.ID, -32000, err.Error())
 				return
 			}
 			respond(enc, req.ID, jsonText(created))
+
+		case "edit_todo":
+			patch := &model.Item{}
+			if has("text") {
+				patch.Text = str("text")
+			}
+			if has("deadline") {
+				patch.Deadline = str("deadline")
+			}
+			if has("trigger") {
+				patch.Trigger = str("trigger")
+			}
+			if has("parent_id") {
+				patch.ParentID = str("parent_id")
+			}
+			if u, ok := params["urgent"].(bool); ok {
+				patch.Urgent = u
+			}
+			if has("tags") {
+				patch.Tags = strSlice(params["tags"])
+			}
+			item, err := c.Update(str("id"), patch)
+			if err != nil {
+				errResp(enc, req.ID, -32000, err.Error())
+				return
+			}
+			respond(enc, req.ID, jsonText(item))
 
 		case "toggle_done":
 			item, err := c.ToggleDone(str("id"))
@@ -228,6 +324,14 @@ func handle(enc *json.Encoder, c *client.Client, req msg) {
 			}
 			respond(enc, req.ID, jsonText(item))
 
+		case "reorder_todos":
+			ids := strSlice(params["ids"])
+			if err := c.Reorder(str("section"), ids); err != nil {
+				errResp(enc, req.ID, -32000, err.Error())
+				return
+			}
+			respond(enc, req.ID, text("reordered"))
+
 		case "list_sections":
 			sections, err := c.Sections()
 			if err != nil {
@@ -235,6 +339,21 @@ func handle(enc *json.Encoder, c *client.Client, req msg) {
 				return
 			}
 			respond(enc, req.ID, jsonText(sections))
+
+		case "get_raw":
+			content, err := c.GetRaw()
+			if err != nil {
+				errResp(enc, req.ID, -32000, err.Error())
+				return
+			}
+			respond(enc, req.ID, text(content))
+
+		case "put_raw":
+			if err := c.PutRaw(str("content")); err != nil {
+				errResp(enc, req.ID, -32000, err.Error())
+				return
+			}
+			respond(enc, req.ID, text("ok"))
 
 		default:
 			errResp(enc, req.ID, -32601, fmt.Sprintf("unknown tool: %s", name))
