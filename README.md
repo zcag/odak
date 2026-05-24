@@ -26,9 +26,14 @@ Comes with a REST API, a real-time web UI, and a terminal interface — all read
 go install github.com/zcag/odak@latest
 ```
 
-Installs the full binary — CLI, TUI, and REST server with embedded web UI. Point the client at a running server with `~/.config/odak/client`:
+Installs the full binary — CLI, TUI, and REST server with embedded web UI. Point the client at a running server via env vars or `~/.config/odak/client`:
 
-```
+```sh
+# env vars
+export ODAK_ENDPOINT=http://your-server:8761
+export ODAK_TOKEN=your-api-key
+
+# or config file (~/.config/odak/client)
 endpoint=http://your-server:8761
 token=your-api-key
 ```
