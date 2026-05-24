@@ -152,6 +152,40 @@ The file is the source of truth — edit it directly and all clients update with
 
 ---
 
+## MCP Server
+
+Use odak as a tool inside Claude Code or any MCP-compatible AI client.
+
+```sh
+odak mcp   # start MCP server (stdio / JSON-RPC 2.0)
+```
+
+Add to `~/.claude/.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "odak": {
+      "command": "odak",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+The server reads client config from the same env vars / `~/.config/odak/client` file as the CLI. Available tools:
+
+| Tool | Description |
+|------|-------------|
+| `list_todos` | List items, optionally filtered by `section` or `tag` |
+| `add_todo` | Add item with optional `section`, `tags`, `urgent`, `deadline` |
+| `toggle_done` | Toggle done state by `id` |
+| `delete_todo` | Delete item by `id` |
+| `move_todo` | Move item to a different section |
+| `list_sections` | List sections with item counts |
+
+---
+
 ## Raw API
 
 All endpoints require `Authorization: Bearer <api-key>`.
