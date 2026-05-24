@@ -17,7 +17,6 @@ Comes with a REST API, a real-time web UI, and a terminal interface — all read
 ```
 
 ![Web UI](docs/screenshots/web-ui.png)
-![Terminal UI](docs/screenshots/tui.png)
 
 ---
 
@@ -113,6 +112,8 @@ odak tui       # explicit
 ```
 
 Navigate sections with arrow keys, toggle done with `x`, edit with `e`, hide completed with `h`.
+
+![Terminal UI](docs/screenshots/tui.png)
 
 ---
 
