@@ -1,0 +1,100 @@
+package api
+
+import (
+	"encoding/json"
+	"io/fs"
+	"net/http"
+
+	"github.com/zcag/odak/internal/store"
+)
+
+type Config struct {
+	APIKey   string
+	User     string
+	Password string
+	ServeUI  bool
+	WebFS    fs.FS
+}
+
+type handler struct {
+	store *store.Store
+	cfg   Config
+	hub   *Hub
+}
+
+func New(st *store.Store, cfg Config) http.Handler {
+	hub := newHub()
+	go hub.Run()
+	h := &handler{store: st, cfg: cfg, hub: hub}
+
+	// broadcast to WS clients when file changes externally
+	st.WatchFile(func() { hub.Broadcast([]byte(`{"type":"reload"}`)) })
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("POST /login", h.login)
+	mux.HandleFunc("GET /todos", h.auth(h.list))
+	mux.HandleFunc("POST /todos", h.auth(h.create))
+	mux.HandleFunc("GET /todos/{id}", h.auth(h.get))
+	mux.HandleFunc("PATCH /todos/{id}", h.auth(h.update))
+	mux.HandleFunc("DELETE /todos/{id}", h.auth(h.delete))
+	mux.HandleFunc("PATCH /todos/{id}/done", h.auth(h.toggleDone))
+	mux.HandleFunc("POST /todos/{id}/move", h.auth(h.move))
+	mux.HandleFunc("POST /todos/reorder", h.auth(h.reorder))
+	mux.HandleFunc("GET /sections", h.auth(h.sections))
+	mux.HandleFunc("GET /raw", h.auth(h.getRaw))
+	mux.HandleFunc("PUT /raw", h.auth(h.putRaw))
+	mux.HandleFunc("GET /ws", h.ws)
+
+	if cfg.ServeUI && cfg.WebFS != nil {
+		fs := http.FileServer(http.FS(cfg.WebFS))
+		mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/" || r.URL.Path == "/index.html" {
+				w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+			}
+			fs.ServeHTTP(w, r)
+		}))
+	}
+
+	return mux
+}
+
+func (h *handler) auth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		token := r.Header.Get("Authorization")
+		if token == "Bearer "+h.cfg.APIKey {
+			next(w, r)
+			return
+		}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}
+}
+
+func (h *handler) login(w http.ResponseWriter, r *http.Request) {
+	var creds struct {
+		User     string `json:"user"`
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&creds); err != nil {
+		writeErr(w, 400, "bad request")
+		return
+	}
+	if h.cfg.User == "" || h.cfg.Password == "" {
+		writeErr(w, 403, "password auth not configured")
+		return
+	}
+	if creds.User != h.cfg.User || creds.Password != h.cfg.Password {
+		writeErr(w, 401, "invalid credentials")
+		return
+	}
+	writeJSON(w, 200, map[string]string{"token": h.cfg.APIKey})
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
+func writeErr(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}

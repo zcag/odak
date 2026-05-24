@@ -1,0 +1,17 @@
+[Unit]
+Description=odak todo service
+After=network.target
+
+[Service]
+ExecStart=/home/cagdas/odak/odak --server --ui
+Environment=ODAK_FILE=/home/cagdas/Sync/vault/personal/todos.md
+Environment=ODAK_API_KEY=changeme
+Environment=ODAK_USER=changeme
+Environment=ODAK_PASSWORD=changeme
+Environment=ODAK_PORT=8761
+Environment=ODAK_BACKUP_DIR=/home/cagdas/odak/backups
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

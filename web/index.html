@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <title>odak</title>
+  <script>
+    // PNG favicon for Safari (doesn't support SVG favicons)
+    (function() {
+      var c = document.createElement('canvas')
+      c.width = c.height = 64
+      var ctx = c.getContext('2d')
+      ctx.fillStyle = '#1e1e2e'
+      ctx.fillRect(0, 0, 64, 64)
+      ctx.fillStyle = '#cba6f7'
+      ctx.beginPath(); ctx.arc(32, 32, 14, 0, Math.PI * 2); ctx.fill()
+      var png = c.toDataURL('image/png')
+      var link = document.createElement('link')
+      link.rel = 'apple-touch-icon'
+      link.href = png
+      document.head.appendChild(link)
+      // fallback icon for Safari
+      var icon = document.querySelector("link[rel='icon']")
+      var pngIcon = document.createElement('link')
+      pngIcon.rel = 'icon'
+      pngIcon.type = 'image/png'
+      pngIcon.href = png
+      if (icon) icon.after(pngIcon); else document.head.appendChild(pngIcon)
+    })()
+  </script>
+</head>
+<body>
+  <div id="app"></div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
