@@ -1,6 +1,10 @@
 # odak
 
-A personal todo service backed by a plain Markdown file. Comes with a REST API, a real-time web UI, and a terminal interface — all reading from and writing to a single `.md` file you can edit directly in any text editor.
+**The world's fastest todo app.**
+
+A personal todo service backed by a plain Markdown file. Every action — toggle, edit, add, delete — reflects instantly in the UI with no perceived latency. Changes to the file from any text editor propagate to all open clients in ~200ms via WebSocket. No database, no sync delay, no cloud.
+
+Comes with a REST API, a real-time web UI, and a terminal interface — all reading from and writing to a single `.md` file.
 
 ```
 ## Focus
@@ -11,6 +15,9 @@ A personal todo service backed by a plain Markdown file. Comes with a REST API, 
 ## Inbox
 - [ ] [!] call the doctor
 ```
+
+![Web UI](docs/screenshots/web-ui.png)
+![Terminal UI](docs/screenshots/tui.png)
 
 ---
 
