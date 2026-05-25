@@ -202,8 +202,11 @@
   let addTarget     = null    // section picker in All view
   let sectPickOpen  = false
   let addEl
+  let addChips      = []      // committed tokens: {kind:'tag'|'section'|'deadline'|'urgent', value}
+  let acIndex       = 0       // highlighted autocomplete row
+  let acDismissed   = false   // hide dropdown until token changes
   let movingId  = null
-  let editingId = null, editText = ''
+  let editingId = null    // when set, the top box is editing this item
   let lastSync  = null
 
   /* ── feature 1: page title ────────────────────────── */
@@ -557,36 +560,129 @@
     api('POST', `/todos/${item.id}/move`, { section: target })
   }
 
-  /* ── edit ─────────────────────────────────────────── */
+  /* ── edit (loads the item into the top rich box) ─────── */
+  function chipsFromItem(item) {
+    const chips = (item.tags || []).map(t => ({ kind: 'tag', value: t }))
+    if (item.urgent) chips.push({ kind: 'urgent', value: true })
+    if (item.deadline) chips.push({ kind: 'deadline', value: item.deadline })
+    return chips
+  }
   async function startEdit(item) {
-    editingId = item.id; editText = item.text
-    await tick(); document.querySelector('[data-edit]')?.focus()
+    editingId = item.id; addText = item.text; addChips = chipsFromItem(item)
+    acDismissed = true; sectPickOpen = false
+    await tick(); addEl?.focus()
   }
-
-  async function commitEdit(item) {
-    if (!editingId) return
-    const text = editText.trim(); editingId = null
-    if (!text || text === item.text) return
-    const o = orig(item.id); if (!o) return
-    mutated(); o.text = text; allItems = allItems
-    api('PATCH', `/todos/${item.id}`, { text })
-  }
+  function cancelEdit() { editingId = null; addText = ''; addChips = []; acDismissed = false }
 
   /* ── add ──────────────────────────────────────────── */
   function parseAdd(raw) {
-    let text = raw.trim(), urgent = false, tags = [], deadline = null
+    let text = raw.trim(), urgent = false, tags = [], deadline = null, section = null
     if (/^!\s/.test(text)) { urgent = true; text = text.replace(/^!\s*/, '') }
     text = text.replace(/#(\S+)/g, (_, t) => { tags.push(t); return '' })
     text = text.replace(/\bd:(\S+)/g, (_, d) => { deadline = d; return '' })
+    // /name → section, by case-insensitive prefix match against existing sections (first wins)
+    text = text.replace(/(^|\s)\/(\S+)/g, (m, pre, name) => {
+      if (section) return m
+      const hit = sections.find(s => s.name.toLowerCase().startsWith(name.toLowerCase()))
+      if (!hit) return m
+      section = hit.name; return pre
+    })
     return { text: text.replace(/\s+/g, ' ').trim(), urgent,
-             tags: tags.length ? tags : undefined, deadline: deadline || undefined }
+             tags: tags.length ? tags : undefined, deadline: deadline || undefined,
+             section: section || undefined }
+  }
+
+  /* ── interactive chips + autocomplete ─────────────────
+     Shorthand tokens snap into chips on space; a contextual
+     dropdown suggests tags / sections / dates while typing. */
+  $: allTags = [...new Set(allItems.flatMap(i => i.tags || []))].sort((a, b) => a.localeCompare(b))
+  $: sectionChip = addChips.find(c => c.kind === 'section')
+  const hasChip = (kind, value) => addChips.some(c => c.kind === kind && (value === undefined || c.value === value))
+
+  function ymd(offset = 0) {
+    const d = new Date(); d.setDate(d.getDate() + offset)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
+
+  // active trailing token → suggestion list (or null)
+  $: ac = (() => {
+    if (acDismissed) return null
+    const m = addText.match(/(?:^|\s)([#/]|d:)(\S*)$/)
+    if (!m) return null
+    const trig = m[1], q = m[2].toLowerCase()
+    if (trig === '#')
+      return { mode: 'tag', q, items: allTags.filter(t => t.toLowerCase().includes(q) && !hasChip('tag', t))
+        .map(t => ({ value: t, label: '#' + t, color: tagColor(t) })) }
+    if (trig === '/')
+      return { mode: 'section', q, items: sections.filter(s => s.name.toLowerCase().includes(q))
+        .map(s => ({ value: s.name, label: s.name, icon: secIcon(s.name) })) }
+    const picks = [['today', 0], ['tomorrow', 1], ['in a week', 7]]
+      .map(([label, o]) => ({ value: ymd(o), label, sub: ymd(o) }))
+    return { mode: 'deadline', q, items: q ? [{ value: q, label: q }, ...picks] : picks }
+  })()
+  $: acOpen = !!ac && ac.items.length > 0
+  $: if (acOpen && acIndex >= ac.items.length) acIndex = 0
+
+  const trailingToken = s => (s.match(/(\S+)$/) || ['', ''])[1]
+  function stripTrailing() { addText = addText.replace(/(\S+)$/, '') }
+
+  function commitToken(kind, value) {
+    if (kind === 'urgent') { if (!hasChip('urgent')) addChips = [...addChips, { kind, value: true }] }
+    else if (kind === 'section' || kind === 'deadline') addChips = [...addChips.filter(c => c.kind !== kind), { kind, value }]
+    else if (!hasChip('tag', value)) addChips = [...addChips, { kind, value }]
+    stripTrailing(); acIndex = 0; acDismissed = false
+  }
+  const acceptAC = () => { const it = ac.items[acIndex]; if (it) commitToken(ac.mode, it.value) }
+  const removeChip = i => { addChips = addChips.filter((_, j) => j !== i); addEl?.focus() }
+
+  function addKeydown(e) {
+    if (acOpen) {
+      if (e.key === 'ArrowDown') { e.preventDefault(); acIndex = (acIndex + 1) % ac.items.length; return }
+      if (e.key === 'ArrowUp')   { e.preventDefault(); acIndex = (acIndex - 1 + ac.items.length) % ac.items.length; return }
+      if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); acceptAC(); return }
+      if (e.key === 'Escape')    { e.preventDefault(); e.stopPropagation(); acDismissed = true; return }
+    }
+    if (e.key === 'Escape' && editingId) { e.preventDefault(); e.stopPropagation(); cancelEdit(); return }
+    if (e.key === 'Enter') { add(); return }
+    if (e.key === ' ') {
+      const t = trailingToken(addText)
+      if (t === '!')                       { e.preventDefault(); commitToken('urgent'); return }
+      if (t[0] === '#' && t.length > 1)    { e.preventDefault(); commitToken('tag', t.slice(1)); return }
+      if (t.startsWith('d:') && t.length > 2) { e.preventDefault(); commitToken('deadline', t.slice(2)); return }
+      if (t[0] === '/' && t.length > 1) {
+        const hit = sections.find(s => s.name.toLowerCase().startsWith(t.slice(1).toLowerCase()))
+        if (hit) { e.preventDefault(); commitToken('section', hit.name) }
+      }
+    }
+    if (e.key === 'Backspace' && addText === '' && addChips.length) { e.preventDefault(); addChips = addChips.slice(0, -1) }
   }
 
   async function add() {
-    const raw = addText.trim(); if (!raw) return
-    addText = ''
+    const fb = parseAdd(addText)
+    const tags = [...new Set([...addChips.filter(c => c.kind === 'tag').map(c => c.value), ...(fb.tags || [])])]
+    const text = fb.text
+    if (!text) return
+    const urgent = hasChip('urgent') || fb.urgent || false
+    const deadline = addChips.find(c => c.kind === 'deadline')?.value ?? fb.deadline
+    const section = sectionChip?.value ?? fb.section
+
+    if (editingId) {
+      const id = editingId, o = orig(id)
+      const moveTo = section && o && section !== o.section ? section : null
+      cancelEdit(); mutated()
+      if (o) { o.text = text; o.tags = tags; o.urgent = urgent; if (deadline) o.deadline = deadline
+               if (moveTo) o.section = moveTo; allItems = allItems }
+      await api('PATCH', `/todos/${id}`, { text, tags, urgent, deadline: deadline || undefined })
+      if (moveTo) await api('POST', `/todos/${id}/move`, { section: moveTo })
+      addEl?.focus(); return
+    }
+
+    addText = ''; addChips = []; acDismissed = false
     mutated()
-    const created = await api('POST', '/todos', { ...parseAdd(raw), section: effectiveAdd })
+    const created = await api('POST', '/todos', {
+      text, tags: tags.length ? tags : undefined, urgent: urgent || undefined,
+      deadline, section: section ?? effectiveAdd,
+    })
     if (created) allItems = [...allItems, created]
     addEl?.focus()
   }
@@ -652,10 +748,6 @@
   function outsideClick(e) {
     if (movingId     && !e.target.closest('[data-move]')) movingId = null
     if (sectPickOpen && !e.target.closest('[data-sp]'))   sectPickOpen = false
-    if (editingId    && !e.target.closest('[data-edit]')) {
-      const item = allItems.find(i => i.id === editingId)
-      if (item) commitEdit(item)
-    }
     if (showHelp && e.target.classList.contains('help-overlay')) closeHelp()
   }
 
@@ -674,7 +766,7 @@
   on:keydown={e => {
     if (!authed) { if (e.key === 'Enter') login(); return }
     if (showHelp) { if (e.key === 'Escape') closeHelp(); return }
-    if (editingId) { if (e.key === 'Escape') editingId = null; return }
+    if (editingId) { if (e.key === 'Escape') cancelEdit(); return }
     if (e.key === '?') { e.preventDefault(); showHelp = true; return }
     if (e.key === 'Escape') { focusedItemId = null; movingId = null; sectPickOpen = false; addEl?.blur(); return }
 
@@ -1012,12 +1104,12 @@
   .tag-chip-clear:hover { color: var(--tx); border-color: var(--bd2) }
 
   /* ── add bar ──────────────────────────────────────── */
-  .add-wrap { padding: 12px 24px 8px; flex-shrink: 0 }
+  .add-wrap { padding: 12px 24px 8px; flex-shrink: 0; position: relative }
 
   .add-box {
-    display: flex; align-items: center; gap: 8px;
+    display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
     background: var(--bg-card); border: 1px solid var(--bd2); border-radius: 8px;
-    padding: 2px 12px; transition: border-color .15s, box-shadow .15s;
+    padding: 4px 12px; transition: border-color .15s, box-shadow .15s;
   }
   .add-box:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg) }
 
@@ -1025,11 +1117,59 @@
   .add-box:focus-within .add-plus { color: var(--accent) }
 
   .add-input {
-    flex: 1; background: none; border: none; outline: none;
+    flex: 1; min-width: 120px; background: none; border: none; outline: none;
     color: var(--tx); font-family: inherit; font-size: 13px;
-    padding: 9px 0; caret-color: var(--accent);
+    padding: 7px 0; caret-color: var(--accent);
   }
   .add-input::placeholder { color: var(--tx4) }
+
+  /* committed token chips */
+  .add-chip {
+    display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+    font-size: 11px; font-weight: 500; line-height: 1;
+    padding: 4px 4px 4px 9px; border-radius: 20px;
+    border: 1px solid; white-space: nowrap;
+  }
+  .add-chip.tag      { color: var(--cc); border-color: color-mix(in srgb, var(--cc) 45%, transparent);
+                       background: color-mix(in srgb, var(--cc) 12%, transparent) }
+  .add-chip.section  { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+                       background: var(--accent-bg) }
+  .add-chip.deadline { color: #f0b429; border-color: color-mix(in srgb, #f0b429 40%, transparent);
+                       background: color-mix(in srgb, #f0b429 11%, transparent) }
+  .add-chip.urgent   { color: #f87171; border-color: color-mix(in srgb, #f87171 42%, transparent);
+                       background: color-mix(in srgb, #f87171 11%, transparent) }
+  .add-chip-x {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 15px; height: 15px; border: none; border-radius: 50%;
+    background: none; color: currentColor; opacity: .55; cursor: pointer;
+    font-size: 13px; line-height: 1; font-family: inherit; padding: 0;
+    transition: opacity .1s, background .1s;
+  }
+  .add-chip-x:hover { opacity: 1; background: color-mix(in srgb, currentColor 22%, transparent) }
+
+  /* autocomplete dropdown */
+  .ac-drop {
+    position: absolute; left: 24px; top: calc(100% - 4px);
+    min-width: 200px; max-height: 240px; overflow-y: auto;
+    background: var(--bg-pop); border: 1px solid var(--bd3); border-radius: 8px;
+    padding: 4px; z-index: 320; box-shadow: 0 12px 32px rgba(0,0,0,.3);
+  }
+  .ac-head {
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--tx3); padding: 3px 8px 5px;
+  }
+  .ac-hint { font-size: 10px; color: var(--tx4); letter-spacing: 0 }
+  .ac-opt {
+    display: flex; align-items: center; gap: 8px; width: 100%;
+    background: none; border: none; color: var(--tx2); font-family: inherit; font-size: 12px;
+    padding: 6px 8px; border-radius: 5px; cursor: pointer; text-align: left;
+    transition: background .08s, color .08s; white-space: nowrap;
+  }
+  .ac-opt.active { background: var(--bg-hover); color: var(--tx) }
+  .ac-swatch { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0 }
+  .ac-icon { width: 12px; text-align: center; opacity: .5; font-size: 11px; flex-shrink: 0 }
+  .ac-sub { margin-left: auto; color: var(--tx4); font-size: 11px; padding-left: 12px }
 
   /* section picker */
   .sect-pick { position: relative; flex-shrink: 0 }
@@ -1111,6 +1251,12 @@
     background: var(--accent-bg);
     box-shadow: inset 2px 0 0 var(--accent);
   }
+  .item.editing {
+    background: var(--accent-bg);
+    box-shadow: inset 2px 0 0 var(--accent);
+    opacity: .55;
+  }
+  .item.editing .item-text { font-style: italic }
 
   /* ── drag and drop ────────────────────────────────── */
   .item.drag-over-before { border-top: 2px solid var(--accent) }
@@ -1196,13 +1342,16 @@
   }
   .item.is-done .item-text { color: var(--tx-done); text-decoration: line-through }
 
-  .edit-input {
-    flex: 1 1 100%; min-width: 0;
-    background: var(--bg-card); border: 1px solid var(--accent); border-radius: 4px;
-    color: var(--tx); font-family: inherit; font-size: 13px;
-    padding: 2px 7px; outline: none; caret-color: var(--accent);
-    box-shadow: 0 0 0 3px var(--accent-bg);
+  /* edit mode: top box switches to editing the selected item */
+  .add-box.editing { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg) }
+  .add-box.editing .add-plus { color: var(--accent) }
+  .add-cancel {
+    background: var(--bg-hover); border: 1px solid var(--bd2); border-radius: 5px;
+    color: var(--tx3); font-family: inherit; font-size: 11px;
+    padding: 3px 8px; cursor: pointer; white-space: nowrap; flex-shrink: 0;
+    transition: color .1s, border-color .1s;
   }
+  .add-cancel:hover { color: var(--tx); border-color: var(--bd3) }
 
   .tag-il { font-size: 11px; font-weight: 500; white-space: nowrap }
   .dl-il  { font-size: 11px; white-space: nowrap }
@@ -1504,14 +1653,30 @@
       {/if}
 
       <!-- Add bar -->
-      <div class="add-wrap">
-        <div class="add-box">
-          <span class="add-plus">+</span>
+      <div class="add-wrap" data-add>
+        <div class="add-box" class:editing={editingId}>
+          <span class="add-plus">{editingId ? '✎' : '+'}</span>
+          {#each addChips as chip, i (chip.kind + '·' + chip.value)}
+            <span class="add-chip {chip.kind}"
+              style={chip.kind === 'tag' ? `--cc:${tagColor(chip.value)}` : ''}
+              in:scale={{ duration: 120, start: .6, easing: cubicOut }} out:scale={{ duration: 100 }}>
+              {#if chip.kind === 'tag'}#{chip.value}
+              {:else if chip.kind === 'section'}{secIcon(chip.value)} {chip.value}
+              {:else if chip.kind === 'deadline'}◷ {dlInfo(chip.value)?.label ?? chip.value}
+              {:else}⚑ urgent{/if}
+              <button class="add-chip-x" on:click={() => removeChip(i)} title="remove">×</button>
+            </span>
+          {/each}
           <input class="add-input"
-            placeholder="add a task… (! urgent  #tag  d:date)"
+            placeholder={editingId ? 'edit task…' : addChips.length ? 'add details…' : 'add a task…  ! #tag d:date /section'}
             bind:value={addText} bind:this={addEl}
-            on:keydown={e => e.key === 'Enter' && add()} />
-          {#if activeSection === null}
+            on:keydown={addKeydown}
+            on:focus={() => acDismissed = false}
+            on:blur={() => setTimeout(() => acDismissed = true, 120)}
+            on:input={() => acDismissed = false} />
+          {#if editingId}
+            <button class="add-cancel" on:click={cancelEdit} title="cancel (esc)">esc ×</button>
+          {:else if activeSection === null && !sectionChip}
             <div class="sect-pick" data-sp>
               <button class="sect-pick-btn" data-sp on:click={() => sectPickOpen = !sectPickOpen}>
                 {effectiveAdd} ▾
@@ -1531,6 +1696,30 @@
             </div>
           {/if}
         </div>
+
+        {#if acOpen}
+          <div class="ac-drop" data-add
+            in:fly={{ y: 4, duration: 120, easing: cubicOut }}>
+            <div class="ac-head">
+              {ac.mode === 'tag' ? 'tags' : ac.mode === 'section' ? 'sections' : 'deadline'}
+              <span class="ac-hint">↑↓ ↵</span>
+            </div>
+            {#each ac.items as it, i (it.value + it.label)}
+              <button class="ac-opt" class:active={i === acIndex}
+                on:mouseenter={() => acIndex = i}
+                on:mousedown|preventDefault={() => { acIndex = i; acceptAC() }}>
+                {#if ac.mode === 'tag'}
+                  <span class="ac-swatch" style="background:{it.color}"></span>{it.label}
+                {:else if ac.mode === 'section'}
+                  <span class="ac-icon">{it.icon}</span>{it.label}
+                {:else}
+                  <span class="ac-icon">◷</span>{it.label}
+                  {#if it.sub}<span class="ac-sub">{it.sub}</span>{/if}
+                {/if}
+              </button>
+            {/each}
+          </div>
+        {/if}
       </div>
 
       <!-- Items -->
@@ -1577,6 +1766,7 @@
                 <div class="item"
                   class:is-done={item.done}
                   class:urgent={item.urgent}
+                  class:editing={editingId === item.id}
                   class:focused={focusedItemId === item.id}
                   class:drag-over-before={dragOverId === item.id && dragOverPos === 'before'}
                   class:drag-over-after={dragOverId === item.id && dragOverPos === 'after'}
@@ -1623,22 +1813,16 @@
 
                   <!-- Text + inline meta -->
                   <div class="content">
-                    {#if editingId === item.id}
-                      <input class="edit-input" bind:value={editText} data-edit use:focus
-                        on:keydown={e => { if (e.key==='Enter') commitEdit(item); if (e.key==='Escape') editingId=null }}
-                        on:blur={() => commitEdit(item)} />
-                    {:else}
-                      <span class="item-text" on:dblclick={() => startEdit(item)}>{item.text}</span>
-                      {#each (item.tags || []) as tag}
-                        <span class="tag-il" style="color:{tagColor(tag)}">#<!--
-                        -->{tag}</span>
-                      {/each}
-                      {#if dl}
-                        <span class="dl-il {dl.cls || ''}">◷ {dl.label}</span>
-                      {/if}
-                      {#if item.trigger}
-                        <span class="dl-il" style="opacity:.4">w:{item.trigger}</span>
-                      {/if}
+                    <span class="item-text" on:dblclick={() => startEdit(item)}>{item.text}</span>
+                    {#each (item.tags || []) as tag}
+                      <span class="tag-il" style="color:{tagColor(tag)}">#<!--
+                      -->{tag}</span>
+                    {/each}
+                    {#if dl}
+                      <span class="dl-il {dl.cls || ''}">◷ {dl.label}</span>
+                    {/if}
+                    {#if item.trigger}
+                      <span class="dl-il" style="opacity:.4">w:{item.trigger}</span>
                     {/if}
                   </div>
 
