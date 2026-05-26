@@ -160,7 +160,13 @@ Use odak as a tool inside Claude Code or any MCP-compatible AI client.
 odak mcp   # start MCP server (stdio / JSON-RPC 2.0)
 ```
 
-Add to `~/.claude/.mcp.json`:
+Register it with Claude Code (user scope — available in every project):
+
+```sh
+claude mcp add odak -s user -- odak mcp
+```
+
+For other MCP clients, point them at the `odak mcp` command over stdio:
 
 ```json
 {
