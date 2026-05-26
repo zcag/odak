@@ -269,9 +269,10 @@
     { key: 'n or /',   desc: 'focus add input' },
     { key: 'w',        desc: 'toggle #work filter' },
     { key: 'p',        desc: 'toggle #personal filter' },
+    { key: 'c',        desc: 'clear tag filters' },
     { key: 'r',        desc: 'refresh' },
     { key: '?',        desc: 'show this overlay' },
-    { key: 'Esc',      desc: 'clear focus / close / cancel' },
+    { key: 'Esc',      desc: 'clear focus / close / cancel, then filters' },
     { key: 'Enter',    desc: 'confirm add / confirm edit' },
     { key: 'dblclick', desc: 'edit item text' },
   ]
@@ -784,7 +785,12 @@
     if (showHelp) { if (e.key === 'Escape') closeHelp(); return }
     if (editingId) { if (e.key === 'Escape') cancelEdit(); return }
     if (e.key === '?') { e.preventDefault(); showHelp = true; return }
-    if (e.key === 'Escape') { focusedItemId = null; movingId = null; sectPickOpen = false; addEl?.blur(); return }
+    if (e.key === 'Escape') {
+      const dismissed = focusedItemId || movingId || sectPickOpen || document.activeElement === addEl
+      focusedItemId = null; movingId = null; sectPickOpen = false; addEl?.blur()
+      if (!dismissed && filtering) clearTags()
+      return
+    }
 
     const notInput = document.activeElement?.tagName !== 'INPUT'
     if (!notInput) return
@@ -793,6 +799,7 @@
     if (e.key === 'r') { poll(); return }
     if (e.key === 'w') { cycleTag('work'); return }
     if (e.key === 'p') { cycleTag('personal'); return }
+    if (e.key === 'c') { clearTags(); return }
 
     if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); navFocus(1); return }
     if (e.key === 'k' || e.key === 'ArrowUp')   { e.preventDefault(); navFocus(-1); return }
