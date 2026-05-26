@@ -405,16 +405,32 @@
   }
 
   /* ── tag filter ───────────────────────────────────── */
-  let activeTags = []
-  function toggleTag(tag) {
-    activeTags = activeTags.includes(tag) ? activeTags.filter(t => t !== tag) : [...activeTags, tag]
+  // each tag cycles: off → include → exclude → off
+  let includeTags = []
+  let excludeTags = []
+  function cycleTag(tag) {
+    if (includeTags.includes(tag)) {          // include → exclude
+      includeTags = includeTags.filter(t => t !== tag)
+      excludeTags = [...excludeTags, tag]
+    } else if (excludeTags.includes(tag)) {   // exclude → off
+      excludeTags = excludeTags.filter(t => t !== tag)
+    } else {                                  // off → include
+      includeTags = [...includeTags, tag]
+    }
   }
+  function clearTags() { includeTags = []; excludeTags = [] }
 
   /* ── derived ──────────────────────────────────────── */
   $: allTags = [...new Set(allItems.flatMap(i => i.tags || []))].sort()
-  $: tagFiltered = activeTags.length === 0
+  $: filtering = includeTags.length > 0 || excludeTags.length > 0
+  $: tagFiltered = !filtering
     ? allItems
-    : allItems.filter(i => (i.tags || []).some(t => activeTags.includes(t)))
+    : allItems.filter(i => {
+        const tags = i.tags || []
+        const inOk = includeTags.length === 0 || tags.some(t => includeTags.includes(t))
+        const exOk = !tags.some(t => excludeTags.includes(t))   // hide if it has any excluded tag
+        return inOk && exOk
+      })
   $: visible = showDone ? tagFiltered : tagFiltered.filter(i => !i.done)
 
   $: grouped = (activeSection === null
@@ -775,8 +791,8 @@
 
     if (e.key === '/' || e.key === 'n') { e.preventDefault(); addEl?.focus(); return }
     if (e.key === 'r') { poll(); return }
-    if (e.key === 'w') { toggleTag('work'); return }
-    if (e.key === 'p') { toggleTag('personal'); return }
+    if (e.key === 'w') { cycleTag('work'); return }
+    if (e.key === 'p') { cycleTag('personal'); return }
 
     if (e.key === 'j' || e.key === 'ArrowDown') { e.preventDefault(); navFocus(1); return }
     if (e.key === 'k' || e.key === 'ArrowUp')   { e.preventDefault(); navFocus(-1); return }
@@ -1091,9 +1107,13 @@
     opacity: .55;
   }
   .tag-chip:hover  { opacity: .9; border-color: var(--tc) }
-  .tag-chip.active {
+  .tag-chip.include {
     background: color-mix(in srgb, var(--tc) 14%, transparent);
     border-color: var(--tc); opacity: 1;
+  }
+  .tag-chip.exclude {
+    border-color: var(--tc); border-style: dashed;
+    text-decoration: line-through; opacity: .8;
   }
   .tag-chip-clear {
     background: none; border: 1px solid var(--bd); border-radius: 20px;
@@ -1642,12 +1662,12 @@
       {#if allTags.length > 0}
         <div class="tag-strip">
           {#each allTags as tag}
-            <button class="tag-chip" class:active={activeTags.includes(tag)}
+            <button class="tag-chip" class:include={includeTags.includes(tag)} class:exclude={excludeTags.includes(tag)}
               style="--tc:{tagColor(tag)}"
-              on:click={() => toggleTag(tag)}>#{tag}</button>
+              on:click={() => cycleTag(tag)}>#{tag}</button>
           {/each}
-          {#if activeTags.length > 0}
-            <button class="tag-chip-clear" on:click={() => activeTags = []}>×</button>
+          {#if filtering}
+            <button class="tag-chip-clear" on:click={clearTags}>×</button>
           {/if}
         </div>
       {/if}
