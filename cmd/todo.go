@@ -218,8 +218,12 @@ func printItems(items []*model.Item) {
 		if item.Urgent {
 			urgent = " !"
 		}
-		fmt.Fprintf(w, "%s\t%s%s%s\t%s%s\n",
-			item.ID, prefix, done, urgent, item.Text, tags)
+		section := item.Section
+		if item.Depth > 0 {
+			section = "" // children inherit their parent's section
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s%s%s\t%s%s\n",
+			item.ID, section, prefix, done, urgent, item.Text, tags)
 	}
 	w.Flush()
 }
