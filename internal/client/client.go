@@ -98,6 +98,27 @@ func (c *Client) Update(id string, patch *model.Item) (*model.Item, error) {
 	return decode[*model.Item](resp)
 }
 
+// ItemPatch is the full edit payload — fields are sent explicitly so [] clears
+// tags and urgent:false unsets the flag. Server's update applies tags only when
+// non-nil and always overwrites urgent.
+type ItemPatch struct {
+	Text     string   `json:"text"`
+	Tags     []string `json:"tags"`
+	Urgent   bool     `json:"urgent"`
+	Deadline string   `json:"deadline,omitempty"`
+}
+
+func (c *Client) Patch(id string, p *ItemPatch) (*model.Item, error) {
+	if p.Tags == nil {
+		p.Tags = []string{}
+	}
+	resp, err := c.do("PATCH", "/todos/"+id, p)
+	if err != nil {
+		return nil, err
+	}
+	return decode[*model.Item](resp)
+}
+
 func (c *Client) Delete(id string) error {
 	resp, err := c.do("DELETE", "/todos/"+id, nil)
 	if err != nil {

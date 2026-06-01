@@ -2,6 +2,8 @@ package tui
 
 import (
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -12,6 +14,20 @@ import (
 	"github.com/zcag/odak/internal/client"
 	"github.com/zcag/odak/internal/model"
 )
+
+var (
+	reTrail = regexp.MustCompile(`\S+$`)
+	reACTok = regexp.MustCompile(`(?:^|\s)([#/]|d:)(\S*)$`)
+)
+
+// chip is a parsed token attached to the add/edit input.
+type chip struct{ kind, value string }
+
+type acItem struct{ label, value string }
+type acState struct {
+	mode  string
+	items []acItem
+}
 
 // ── palette ───────────────────────────────────────────────────────────────────
 // One accent, three neutrals (text / dim / very-dim), status colors.
@@ -76,10 +92,15 @@ type Model struct {
 	cursor        int
 	offset        int
 	filterSection string
+	includeTags   []string
+	excludeTags   []string
 	mode          modeID
 	input         textinput.Model
 	addSection    string
 	editID        string
+	addChips      []chip
+	acIndex       int
+	acDismissed   bool
 	showDone      bool
 	w, h          int
 	loading       bool
@@ -92,7 +113,7 @@ func New(cl *client.Client) Model {
 	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(clrDim)
 	ti.TextStyle = lipgloss.NewStyle().Foreground(clrText)
 	ti.Cursor.Style = lipgloss.NewStyle().Foreground(clrAccent)
-	return Model{cl: cl, input: ti, loading: true, showDone: true}
+	return Model{cl: cl, input: ti, loading: true, showDone: false}
 }
 
 func Run(cl *client.Client) error {
@@ -155,10 +176,8 @@ func (m Model) clampScroll() Model {
 
 func (m Model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch m.mode {
-	case modeAdd:
-		return m.handleAddKey(k)
-	case modeEdit:
-		return m.handleEditKey(k)
+	case modeAdd, modeEdit:
+		return m.handleInputKey(k)
 	case modeMove:
 		return m.handleMoveKey(k)
 	case modeConfirmDelete:
@@ -239,6 +258,25 @@ func (m Model) handleBrowseKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			m = m.clampScroll()
+		} else if len(m.includeTags) > 0 || len(m.excludeTags) > 0 {
+			m.includeTags = nil
+			m.excludeTags = nil
+			m = m.clampScroll()
+		}
+
+	case "w":
+		m = m.cycleTag("work")
+		m = m.clampScroll()
+
+	case "p":
+		m = m.cycleTag("personal")
+		m = m.clampScroll()
+
+	case "c":
+		if len(m.includeTags) > 0 || len(m.excludeTags) > 0 {
+			m.includeTags = nil
+			m.excludeTags = nil
+			m = m.clampScroll()
 		}
 
 	case " ", "x":
@@ -252,8 +290,11 @@ func (m Model) handleBrowseKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			sec = m.sections[0].Name
 		}
 		m.addSection = sec
-		m.input.Placeholder = "new item…"
+		m.input.Placeholder = "new item…   #tag  /section  d:date  ! urgent"
 		m.input.SetValue("")
+		m.addChips = nil
+		m.acIndex = 0
+		m.acDismissed = false
 		m.input.Focus()
 		m.mode = modeAdd
 		var cmd tea.Cmd
@@ -265,6 +306,9 @@ func (m Model) handleBrowseKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.editID = item.ID
 			m.input.Placeholder = "edit text…"
 			m.input.SetValue(item.Text)
+			m.addChips = chipsFromItem(item)
+			m.acIndex = 0
+			m.acDismissed = false
 			m.input.Focus()
 			m.input.CursorEnd()
 			m.mode = modeEdit
@@ -294,47 +338,106 @@ func (m Model) handleBrowseKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleAddKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch k.Type {
-	case tea.KeyEnter:
-		text := strings.TrimSpace(m.input.Value())
-		m.mode = modeBrowse
-		m.input.Blur()
-		if text != "" {
-			return m, m.cmdAdd(text, m.addSection)
+func (m Model) handleInputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
+	ks := k.String()
+	ac := m.currentAC()
+
+	// autocomplete navigation has priority
+	if ac != nil {
+		switch ks {
+		case "down":
+			m.acIndex = (m.acIndex + 1) % len(ac.items)
+			return m, nil
+		case "up":
+			m.acIndex = (m.acIndex - 1 + len(ac.items)) % len(ac.items)
+			return m, nil
+		case "tab":
+			it := ac.items[m.acIndex%len(ac.items)]
+			m.commitChip(ac.mode, it.value)
+			return m, nil
 		}
-		return m, nil
-	case tea.KeyEsc:
+	}
+
+	switch ks {
+	case "esc":
+		if ac != nil {
+			m.acDismissed = true
+			return m, nil
+		}
 		m.mode = modeBrowse
+		m.editID = ""
+		m.addChips = nil
+		m.acDismissed = false
 		m.input.Blur()
 		return m, nil
+
+	case "enter":
+		if ac != nil {
+			it := ac.items[m.acIndex%len(ac.items)]
+			m.commitChip(ac.mode, it.value)
+			return m, nil
+		}
+		return m.submitInput()
+
+	case " ":
+		if m.maybeCommitTrailing() {
+			return m, nil
+		}
+
+	case "backspace":
+		if m.input.Value() == "" && len(m.addChips) > 0 {
+			m.addChips = m.addChips[:len(m.addChips)-1]
+			return m, nil
+		}
 	}
+
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(k)
 	return m, cmd
 }
 
-func (m Model) handleEditKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch k.Type {
-	case tea.KeyEnter:
-		text := strings.TrimSpace(m.input.Value())
-		id := m.editID
-		m.mode = modeBrowse
-		m.editID = ""
-		m.input.Blur()
-		if text != "" {
-			return m, m.cmdUpdate(id, text)
-		}
-		return m, nil
-	case tea.KeyEsc:
-		m.mode = modeBrowse
-		m.editID = ""
-		m.input.Blur()
+func (m Model) submitInput() (tea.Model, tea.Cmd) {
+	m.maybeCommitTrailing()
+	text := strings.TrimSpace(m.input.Value())
+
+	chips := m.addChips
+	isEdit := m.mode == modeEdit
+	editID := m.editID
+	defaultSec := m.addSection
+
+	m.mode = modeBrowse
+	m.addChips = nil
+	m.editID = ""
+	m.acDismissed = false
+	m.input.Blur()
+
+	if text == "" {
 		return m, nil
 	}
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(k)
-	return m, cmd
+
+	var tags []string
+	var urgent bool
+	var deadline, section string
+	for _, c := range chips {
+		switch c.kind {
+		case "tag":
+			tags = append(tags, c.value)
+		case "section":
+			section = c.value
+		case "deadline":
+			deadline = c.value
+		case "urgent":
+			urgent = true
+		}
+	}
+
+	if isEdit {
+		return m, m.cmdEdit(editID, text, tags, urgent, deadline, section)
+	}
+	if section == "" {
+		section = defaultSec
+	}
+	return m, m.cmdAdd(text, tags, urgent, deadline, section)
 }
 
 func (m Model) handleMoveKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -382,9 +485,16 @@ func (m Model) visibleRows() []row {
 		first = false
 		rows = append(rows, row{kind: rowSection, secName: sec.Name, count: sec.Count})
 		for _, item := range m.allItems {
-			if item.Section == sec.Name && (m.showDone || !item.Done) {
-				rows = append(rows, row{kind: rowItem, item: item})
+			if item.Section != sec.Name {
+				continue
 			}
+			if !m.showDone && item.Done {
+				continue
+			}
+			if !m.matchesTagFilter(item) {
+				continue
+			}
+			rows = append(rows, row{kind: rowItem, item: item})
 		}
 	}
 	return rows
@@ -438,9 +548,10 @@ func (m Model) cmdToggle(id string) tea.Cmd {
 	}
 }
 
-func (m Model) cmdAdd(text, sec string) tea.Cmd {
+func (m Model) cmdAdd(text string, tags []string, urgent bool, deadline, section string) tea.Cmd {
+	it := &model.Item{Text: text, Section: section, Tags: tags, Urgent: urgent, Deadline: deadline}
 	return func() tea.Msg {
-		if _, err := m.cl.Create(&model.Item{Text: text, Section: sec}); err != nil {
+		if _, err := m.cl.Create(it); err != nil {
 			return errMsg{err}
 		}
 		return doneMsg{}
@@ -456,10 +567,19 @@ func (m Model) cmdDelete(id string) tea.Cmd {
 	}
 }
 
-func (m Model) cmdUpdate(id, text string) tea.Cmd {
+func (m Model) cmdEdit(id, text string, tags []string, urgent bool, deadline, section string) tea.Cmd {
+	if tags == nil {
+		tags = []string{}
+	}
+	patch := &client.ItemPatch{Text: text, Tags: tags, Urgent: urgent, Deadline: deadline}
 	return func() tea.Msg {
-		if _, err := m.cl.Update(id, &model.Item{Text: text}); err != nil {
+		if _, err := m.cl.Patch(id, patch); err != nil {
 			return errMsg{err}
+		}
+		if section != "" {
+			if _, err := m.cl.Move(id, section); err != nil {
+				return errMsg{err}
+			}
 		}
 		return doneMsg{}
 	}
@@ -472,6 +592,201 @@ func (m Model) cmdMove(id, section string) tea.Cmd {
 		}
 		return doneMsg{}
 	}
+}
+
+// ── chip + autocomplete + tag filter helpers ──────────────────────────────────
+
+func chipsFromItem(it *model.Item) []chip {
+	var out []chip
+	for _, t := range it.Tags {
+		out = append(out, chip{kind: "tag", value: t})
+	}
+	if it.Urgent {
+		out = append(out, chip{kind: "urgent"})
+	}
+	if it.Deadline != "" {
+		out = append(out, chip{kind: "deadline", value: it.Deadline})
+	}
+	return out
+}
+
+func (m Model) hasChip(kind, value string) bool {
+	for _, c := range m.addChips {
+		if c.kind == kind && (value == "" || c.value == value) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *Model) commitChip(kind, value string) {
+	text := reTrail.ReplaceAllString(m.input.Value(), "")
+	m.input.SetValue(text)
+	m.input.CursorEnd()
+	switch kind {
+	case "urgent":
+		if !m.hasChip("urgent", "") {
+			m.addChips = append(m.addChips, chip{kind: kind})
+		}
+	case "section", "deadline":
+		filtered := m.addChips[:0]
+		for _, c := range m.addChips {
+			if c.kind != kind {
+				filtered = append(filtered, c)
+			}
+		}
+		m.addChips = append(filtered, chip{kind: kind, value: value})
+	case "tag":
+		if !m.hasChip("tag", value) {
+			m.addChips = append(m.addChips, chip{kind: kind, value: value})
+		}
+	}
+	m.acIndex = 0
+	m.acDismissed = false
+}
+
+// maybeCommitTrailing tries to convert the current trailing token into a chip.
+// Returns true if a chip was committed.
+func (m *Model) maybeCommitTrailing() bool {
+	trailing := reTrail.FindString(m.input.Value())
+	if trailing == "" {
+		return false
+	}
+	switch {
+	case trailing == "!":
+		m.commitChip("urgent", "")
+		return true
+	case strings.HasPrefix(trailing, "#") && len(trailing) > 1:
+		m.commitChip("tag", trailing[1:])
+		return true
+	case strings.HasPrefix(trailing, "d:") && len(trailing) > 2:
+		m.commitChip("deadline", trailing[2:])
+		return true
+	case strings.HasPrefix(trailing, "/") && len(trailing) > 1:
+		q := strings.ToLower(trailing[1:])
+		for _, sec := range m.sections {
+			if strings.HasPrefix(strings.ToLower(sec.Name), q) {
+				m.commitChip("section", sec.Name)
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (m Model) collectTags() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, it := range m.allItems {
+		for _, t := range it.Tags {
+			if !seen[t] {
+				seen[t] = true
+				out = append(out, t)
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+func ymd(offset int) string {
+	return time.Now().AddDate(0, 0, offset).Format("2006-01-02")
+}
+
+func (m Model) currentAC() *acState {
+	if m.acDismissed {
+		return nil
+	}
+	matches := reACTok.FindStringSubmatch(m.input.Value())
+	if matches == nil {
+		return nil
+	}
+	trig, q := matches[1], strings.ToLower(matches[2])
+	s := &acState{}
+	switch trig {
+	case "#":
+		s.mode = "tag"
+		for _, t := range m.collectTags() {
+			if strings.Contains(strings.ToLower(t), q) && !m.hasChip("tag", t) {
+				s.items = append(s.items, acItem{label: "#" + t, value: t})
+			}
+		}
+	case "/":
+		s.mode = "section"
+		for _, sec := range m.sections {
+			if strings.Contains(strings.ToLower(sec.Name), q) {
+				s.items = append(s.items, acItem{label: sec.Name, value: sec.Name})
+			}
+		}
+	case "d:":
+		s.mode = "deadline"
+		if q != "" {
+			s.items = append(s.items, acItem{label: q, value: q})
+		}
+		s.items = append(s.items,
+			acItem{label: "today", value: ymd(0)},
+			acItem{label: "tomorrow", value: ymd(1)},
+			acItem{label: "in a week", value: ymd(7)},
+		)
+	}
+	if len(s.items) == 0 {
+		return nil
+	}
+	return s
+}
+
+func (m Model) cycleTag(tag string) Model {
+	inIdx, exIdx := -1, -1
+	for i, t := range m.includeTags {
+		if t == tag {
+			inIdx = i
+			break
+		}
+	}
+	for i, t := range m.excludeTags {
+		if t == tag {
+			exIdx = i
+			break
+		}
+	}
+	switch {
+	case inIdx >= 0:
+		m.includeTags = append(m.includeTags[:inIdx], m.includeTags[inIdx+1:]...)
+		m.excludeTags = append(m.excludeTags, tag)
+	case exIdx >= 0:
+		m.excludeTags = append(m.excludeTags[:exIdx], m.excludeTags[exIdx+1:]...)
+	default:
+		m.includeTags = append(m.includeTags, tag)
+	}
+	return m
+}
+
+func (m Model) matchesTagFilter(it *model.Item) bool {
+	if len(m.includeTags) > 0 {
+		ok := false
+		for _, t := range it.Tags {
+			for _, inc := range m.includeTags {
+				if t == inc {
+					ok = true
+					break
+				}
+			}
+			if ok {
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	for _, t := range it.Tags {
+		for _, ex := range m.excludeTags {
+			if t == ex {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // ── view constants ────────────────────────────────────────────────────────────
@@ -491,7 +806,14 @@ func (m Model) bodyH() int {
 	if m.h < 5 {
 		return 1
 	}
-	return m.h - 4 // header + top-div + bot-div + footer
+	base := m.h - 4 // header + top-div + bot-div + footer
+	if (m.mode == modeAdd || m.mode == modeEdit) && m.currentAC() != nil {
+		base--
+	}
+	if base < 1 {
+		base = 1
+	}
+	return base
 }
 
 // ── view ──────────────────────────────────────────────────────────────────────
@@ -532,33 +854,34 @@ func (m Model) View() string {
 
 func (m Model) renderTitle(w int) string {
 	brand := lipgloss.NewStyle().Foreground(clrAccent).Bold(true).Render("odak")
-
-	var left string
+	left := strings.Repeat(" ", margin) + brand
 	if m.filterSection != "" {
 		sep := lipgloss.NewStyle().Foreground(clrDim).Render("  /  ")
 		sec := lipgloss.NewStyle().Foreground(clrText).Render(m.filterSection)
-		left = strings.Repeat(" ", margin) + brand + sep + sec
-	} else {
-		left = strings.Repeat(" ", margin) + brand
+		left += sep + sec
+	}
+	if len(m.includeTags) > 0 || len(m.excludeTags) > 0 {
+		dot := lipgloss.NewStyle().Foreground(clrFaint).Render("  ·  ")
+		var parts []string
+		for _, t := range m.includeTags {
+			parts = append(parts, lipgloss.NewStyle().Foreground(clrAccent).Render("+"+t))
+		}
+		for _, t := range m.excludeTags {
+			parts = append(parts, lipgloss.NewStyle().Foreground(clrDim).Strikethrough(true).Render(t))
+		}
+		left += dot + strings.Join(parts, " ")
 	}
 
 	open := 0
 	for _, it := range m.allItems {
-		if !it.Done {
+		if !it.Done && m.matchesTagFilter(it) {
+			if m.filterSection != "" && it.Section != m.filterSection {
+				continue
+			}
 			open++
 		}
 	}
-	var summary string
-	if m.filterSection != "" {
-		for _, it := range m.allItems {
-			if it.Section == m.filterSection && !it.Done {
-				open++
-			}
-		}
-		summary = fmt.Sprintf("%d open", open)
-	} else {
-		summary = fmt.Sprintf("%d open", open)
-	}
+	summary := fmt.Sprintf("%d open", open)
 	right := lipgloss.NewStyle().Foreground(clrDim).Render(summary) + strings.Repeat(" ", margin)
 
 	lw := lipgloss.Width(left)
@@ -716,17 +1039,36 @@ func (m Model) renderFooter(w int) string {
 	pad := strings.Repeat(" ", margin)
 
 	switch m.mode {
-	case modeAdd:
-		label := lipgloss.NewStyle().Foreground(clrAccent).Render(m.addSection)
+	case modeAdd, modeEdit:
+		labelTxt := m.addSection
+		if m.mode == modeEdit {
+			labelTxt = "edit"
+		}
+		label := lipgloss.NewStyle().Foreground(clrAccent).Render(labelTxt)
 		sep := lipgloss.NewStyle().Foreground(clrDim).Render("  ›  ")
-		m.input.Width = w - lipgloss.Width(label) - lipgloss.Width(sep) - margin - 1
-		return pad + label + sep + m.input.View()
 
-	case modeEdit:
-		label := lipgloss.NewStyle().Foreground(clrAccent).Render("edit")
-		sep := lipgloss.NewStyle().Foreground(clrDim).Render("  ›  ")
-		m.input.Width = w - lipgloss.Width(label) - lipgloss.Width(sep) - margin - 1
-		return pad + label + sep + m.input.View()
+		var chipParts []string
+		for _, c := range m.addChips {
+			chipParts = append(chipParts, m.renderChip(c))
+		}
+		chipsStr := ""
+		if len(chipParts) > 0 {
+			chipsStr = strings.Join(chipParts, " ") + " "
+		}
+
+		prefix := pad + label + sep + chipsStr
+		m.input.Width = w - lipgloss.Width(prefix) - margin - 1
+		if m.input.Width < 10 {
+			m.input.Width = 10
+		}
+		inputLine := prefix + m.input.View()
+
+		ac := m.currentAC()
+		if ac == nil {
+			return inputLine
+		}
+		acLine := pad + m.renderAC(ac, w)
+		return acLine + "\n" + inputLine
 
 	case modeMove:
 		var parts []string
@@ -768,17 +1110,20 @@ func (m Model) renderFooter(w int) string {
 	}
 	type hint struct{ k, v string }
 	var hints []hint
-	if m.filterSection != "" {
-		hints = []hint{
-			{"j k", "nav"}, {"space", "toggle"}, {"a", "add"},
-			{"e", "edit"}, {"d", "del"}, {"m", "move"}, {"h", doneHint}, {"esc", "all"}, {"q", "quit"},
-		}
-	} else {
-		hints = []hint{
-			{"j k", "nav"}, {"space", "toggle"}, {"a", "add"},
-			{"e", "edit"}, {"f", "filter"}, {"d", "del"}, {"m", "move"}, {"h", doneHint}, {"q", "quit"},
-		}
+	hints = append(hints, hint{"j k", "nav"}, hint{"space", "toggle"}, hint{"a", "add"}, hint{"e", "edit"})
+	if m.filterSection == "" {
+		hints = append(hints, hint{"f", "filter"})
 	}
+	hints = append(hints, hint{"d", "del"}, hint{"m", "move"})
+	hints = append(hints, hint{"w/p", "tag"})
+	if len(m.includeTags) > 0 || len(m.excludeTags) > 0 {
+		hints = append(hints, hint{"c", "clear"})
+	}
+	hints = append(hints, hint{"h", doneHint})
+	if m.filterSection != "" || len(m.includeTags) > 0 || len(m.excludeTags) > 0 {
+		hints = append(hints, hint{"esc", "back"})
+	}
+	hints = append(hints, hint{"q", "quit"})
 
 	dot := lipgloss.NewStyle().Foreground(clrFaint).Render("·")
 	var parts []string
@@ -788,6 +1133,42 @@ func (m Model) renderFooter(w int) string {
 		parts = append(parts, key+val)
 	}
 	return pad + strings.Join(parts, "  "+dot+"  ")
+}
+
+func (m Model) renderChip(c chip) string {
+	switch c.kind {
+	case "tag":
+		return lipgloss.NewStyle().Foreground(clrAccent).Render("#" + c.value)
+	case "section":
+		return lipgloss.NewStyle().Foreground(clrAccent).Render("/" + c.value)
+	case "deadline":
+		return lipgloss.NewStyle().Foreground(clrDim).Render("d:" + shortDate(c.value))
+	case "urgent":
+		return lipgloss.NewStyle().Foreground(clrUrgent).Bold(true).Render("!")
+	}
+	return ""
+}
+
+func (m Model) renderAC(ac *acState, w int) string {
+	max := 6
+	if len(ac.items) < max {
+		max = len(ac.items)
+	}
+	var parts []string
+	for i := 0; i < max; i++ {
+		it := ac.items[i]
+		if i == m.acIndex {
+			parts = append(parts, lipgloss.NewStyle().Foreground(clrAccent).Bold(true).Render(it.label))
+		} else {
+			parts = append(parts, lipgloss.NewStyle().Foreground(clrDim).Render(it.label))
+		}
+	}
+	more := ""
+	if len(ac.items) > max {
+		more = lipgloss.NewStyle().Foreground(clrFaint).Render(fmt.Sprintf("  +%d", len(ac.items)-max))
+	}
+	hint := lipgloss.NewStyle().Foreground(clrFaint).Render("  tab")
+	return strings.Join(parts, "  ") + more + hint
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
