@@ -39,7 +39,7 @@ func Run(args []string, webFS fs.FS, version string) {
 	}
 
 	// bare filter token: `odak t:personal` is shorthand for `odak ls t:personal`
-	if isFilterToken(args[0]) {
+	if isFilterToken(args[0]) || args[0] == "--all" || args[0] == "-a" {
 		runList(args)
 		return
 	}
@@ -90,7 +90,7 @@ Server:
   --backup-dir  backup directory (or ODAK_BACKUP_DIR)
 
 Client (reads ~/.config/odak/client or ODAK_ENDPOINT / ODAK_TOKEN):
-  odak list [section] [t:TAG ...] [t:-TAG ...]   list todos, filter by tag
+  odak list [section] [t:TAG ...] [t:-TAG ...] [--all]   list todos (done hidden unless --all)
   odak t:TAG                           shorthand for: odak list t:TAG
   odak add <text> [--section S] [--tag T] [--urgent] [--deadline D] [--parent ID]
   odak done <id>                       toggle done

@@ -25,9 +25,12 @@ func isFilterToken(s string) bool { return strings.HasPrefix(s, "t:") }
 
 func runList(args []string) {
 	section := ""
+	all := false
 	var inc, exc []string
 	for _, a := range args {
 		switch {
+		case a == "--all" || a == "-a":
+			all = true
 		case strings.HasPrefix(a, "t:-"):
 			if t := a[3:]; t != "" {
 				exc = append(exc, t)
@@ -44,7 +47,21 @@ func runList(args []string) {
 	}
 	items, err := newClient().List(section, "", "")
 	die(err)
+	if !all {
+		items = filterDone(items)
+	}
 	printItems(filterByTags(items, inc, exc))
+}
+
+// filterDone drops completed items (hidden by default; --all keeps them).
+func filterDone(items []*model.Item) []*model.Item {
+	out := items[:0]
+	for _, it := range items {
+		if !it.Done {
+			out = append(out, it)
+		}
+	}
+	return out
 }
 
 // filterByTags keeps items with any included tag (OR) and drops any with an
