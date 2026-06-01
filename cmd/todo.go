@@ -20,14 +20,61 @@ func newClient() *client.Client {
 	return client.New(cfg.Endpoint, cfg.Token)
 }
 
+// isFilterToken reports whether arg is a tag filter like t:work or t:-work.
+func isFilterToken(s string) bool { return strings.HasPrefix(s, "t:") }
+
 func runList(args []string) {
 	section := ""
-	if len(args) > 0 {
-		section = args[0]
+	var inc, exc []string
+	for _, a := range args {
+		switch {
+		case strings.HasPrefix(a, "t:-"):
+			if t := a[3:]; t != "" {
+				exc = append(exc, t)
+			}
+		case strings.HasPrefix(a, "t:"):
+			if t := a[2:]; t != "" {
+				inc = append(inc, t)
+			}
+		default:
+			if section == "" {
+				section = a
+			}
+		}
 	}
 	items, err := newClient().List(section, "", "")
 	die(err)
-	printItems(items)
+	printItems(filterByTags(items, inc, exc))
+}
+
+// filterByTags keeps items with any included tag (OR) and drops any with an
+// excluded tag — mirrors the web UI's include/exclude semantics.
+func filterByTags(items []*model.Item, inc, exc []string) []*model.Item {
+	if len(inc) == 0 && len(exc) == 0 {
+		return items
+	}
+	var out []*model.Item
+	for _, it := range items {
+		if len(inc) > 0 && !hasAny(it.Tags, inc) {
+			continue
+		}
+		if hasAny(it.Tags, exc) {
+			continue
+		}
+		out = append(out, it)
+	}
+	return out
+}
+
+func hasAny(tags, set []string) bool {
+	for _, t := range tags {
+		for _, s := range set {
+			if t == s {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func runAdd(args []string) {

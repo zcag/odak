@@ -38,6 +38,12 @@ func Run(args []string, webFS fs.FS, version string) {
 		return
 	}
 
+	// bare filter token: `odak t:personal` is shorthand for `odak ls t:personal`
+	if isFilterToken(args[0]) {
+		runList(args)
+		return
+	}
+
 	// client subcommands
 	switch args[0] {
 	case "tui", "ui":
@@ -84,7 +90,8 @@ Server:
   --backup-dir  backup directory (or ODAK_BACKUP_DIR)
 
 Client (reads ~/.config/odak/client or ODAK_ENDPOINT / ODAK_TOKEN):
-  odak list [section]                  list todos
+  odak list [section] [t:TAG ...] [t:-TAG ...]   list todos, filter by tag
+  odak t:TAG                           shorthand for: odak list t:TAG
   odak add <text> [--section S] [--tag T] [--urgent] [--deadline D] [--parent ID]
   odak done <id>                       toggle done
   odak rm <id>                         delete
