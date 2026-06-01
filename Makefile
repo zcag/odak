@@ -4,7 +4,7 @@ MARKO     := marko
 REMOTE_USER := cagdas
 REMOTE_DIR  := /home/$(REMOTE_USER)/odak
 SERVICE     := odak
-INSTALL_DIR := $(HOME)/dotty/common/.local/bin
+INSTALL_DIR := $(HOME)/.local/bin
 
 _TAG   := $(shell git describe --tags --abbrev=0 2>/dev/null)
 _REV   := $(shell git rev-list $(_TAG)..HEAD --count 2>/dev/null || git rev-list HEAD --count 2>/dev/null || echo 0)
