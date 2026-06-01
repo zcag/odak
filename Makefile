@@ -18,7 +18,7 @@ LDFLAGS := -ldflags "-s -w -X main.Version=$(VERSION)"
 build: web-build
 	go build $(LDFLAGS) -o bin/$(BINARY) .
 	@mkdir -p $(INSTALL_DIR)
-	@cp bin/$(BINARY) $(INSTALL_DIR)/$(BINARY)
+	@cp bin/$(BINARY) $(INSTALL_DIR)/$(BINARY).new && mv -f $(INSTALL_DIR)/$(BINARY).new $(INSTALL_DIR)/$(BINARY)
 	@echo "installed $(INSTALL_DIR)/$(BINARY)  [$(VERSION)]"
 
 web-build:
@@ -30,7 +30,7 @@ build-archer:
 deploy: web-build build-archer
 	go build $(LDFLAGS) -o bin/$(BINARY) .
 	@mkdir -p $(INSTALL_DIR)
-	@cp bin/$(BINARY) $(INSTALL_DIR)/$(BINARY)
+	@cp bin/$(BINARY) $(INSTALL_DIR)/$(BINARY).new && mv -f $(INSTALL_DIR)/$(BINARY).new $(INSTALL_DIR)/$(BINARY)
 	ssh $(REMOTE_USER)@$(ARCHER) "mkdir -p $(REMOTE_DIR)"
 	rsync -av bin/$(BINARY)-linux $(REMOTE_USER)@$(ARCHER):$(REMOTE_DIR)/$(BINARY)
 	ssh $(REMOTE_USER)@$(ARCHER) "systemctl --user restart $(SERVICE)"
