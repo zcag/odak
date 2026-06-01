@@ -445,7 +445,7 @@
     : [{ name: activeSection, collapsed: false, items: treeFlat(visible.filter(i => i.section === activeSection), collapsedParents) }])
 
   $: totalOpen = allItems.filter(i => !i.done).length
-  $: effectiveAdd = activeSection ?? addTarget ?? sections[0]?.name ?? 'Inbox'
+  $: effectiveAdd = activeSection ?? addTarget ?? sections.find(s => s.name === 'Inbox')?.name ?? sections[0]?.name ?? 'Inbox'
 
   /* ── api ──────────────────────────────────────────── */
   function getToken() {
