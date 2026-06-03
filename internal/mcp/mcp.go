@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/zcag/odak/internal/client"
 	"github.com/zcag/odak/internal/model"
@@ -76,7 +77,7 @@ var tools = []toolDef{
 				"urgent":    map[string]any{"type": "boolean", "description": "Mark as urgent"},
 				"deadline":  map[string]any{"type": "string", "description": "Deadline date (YYYY-MM-DD)"},
 				"trigger":   map[string]any{"type": "string", "description": "Wait/trigger date (YYYY-MM-DD)"},
-				"tags":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tags"},
+				"tags":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Tags as bare names, without the t: prefix (e.g. personal, work, infra) — the t: is added on render"},
 				"parent_id": map[string]any{"type": "string", "description": "Parent item ID (creates a sub-item)"},
 			},
 		},
@@ -93,7 +94,7 @@ var tools = []toolDef{
 				"urgent":    map[string]any{"type": "boolean", "description": "Mark as urgent"},
 				"deadline":  map[string]any{"type": "string", "description": "Deadline date (YYYY-MM-DD), empty string to clear"},
 				"trigger":   map[string]any{"type": "string", "description": "Wait/trigger date (YYYY-MM-DD), empty string to clear"},
-				"tags":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Replace tags list"},
+				"tags":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Replace tags list; bare names without the t: prefix (e.g. personal, work, infra)"},
 				"parent_id": map[string]any{"type": "string", "description": "Re-parent to this item ID, empty string to make top-level"},
 			},
 		},
@@ -190,6 +191,16 @@ func strSlice(v any) []string {
 	return out
 }
 
+// tagSlice is strSlice for tags: it tolerates a leading "t:" (the render-time
+// prefix) so callers passing "t:personal" don't produce "[t:t:personal]".
+func tagSlice(v any) []string {
+	tags := strSlice(v)
+	for i, t := range tags {
+		tags[i] = strings.TrimPrefix(t, "t:")
+	}
+	return tags
+}
+
 func handle(enc *json.Encoder, c *client.Client, req msg) {
 	// parse params: tools/call wraps args in {"name":..., "arguments":{...}}
 	var callParams struct {
@@ -266,7 +277,7 @@ func handle(enc *json.Encoder, c *client.Client, req msg) {
 			if u, ok := params["urgent"].(bool); ok {
 				item.Urgent = u
 			}
-			item.Tags = strSlice(params["tags"])
+			item.Tags = tagSlice(params["tags"])
 			created, err := c.Create(item)
 			if err != nil {
 				errResp(enc, req.ID, -32000, err.Error())
@@ -292,7 +303,7 @@ func handle(enc *json.Encoder, c *client.Client, req msg) {
 				patch.Urgent = u
 			}
 			if has("tags") {
-				patch.Tags = strSlice(params["tags"])
+				patch.Tags = tagSlice(params["tags"])
 			}
 			item, err := c.Update(str("id"), patch)
 			if err != nil {
