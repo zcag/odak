@@ -2,3 +2,4 @@ bin/
 web/node_modules/
 deploy/odak.service
 *.lock
+.playwright-mcp/
