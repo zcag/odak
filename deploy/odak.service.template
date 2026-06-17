@@ -10,6 +10,11 @@ Environment=ODAK_USER=changeme
 Environment=ODAK_PASSWORD=changeme
 Environment=ODAK_PORT=8761
 Environment=ODAK_BACKUP_DIR=/home/cagdas/odak/backups
+# Optional: let Claude.ai / ChatGPT "Connect" via WorkOS AuthKit OAuth (in
+# addition to the static API key). Omit all three to keep /mcp API-key-only.
+#Environment=ODAK_OAUTH_ISSUER=https://your-app.authkit.app
+#Environment=ODAK_MCP_RESOURCE=https://odak.cagdas.io/mcp
+#Environment=ODAK_OAUTH_ALLOWED_EMAIL=you@example.com
 Restart=on-failure
 RestartSec=5
 
