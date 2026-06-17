@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"net/http"
 
+	apiclient "github.com/zcag/odak/internal/client"
+	"github.com/zcag/odak/internal/mcp"
 	"github.com/zcag/odak/internal/store"
 )
 
@@ -14,6 +16,9 @@ type Config struct {
 	Password string
 	ServeUI  bool
 	WebFS    fs.FS
+	// MCPClient, if set, mounts the MCP endpoint at /mcp. It is a loopback API
+	// client so MCP tool calls reuse the REST handlers' filtering/validation.
+	MCPClient *apiclient.Client
 }
 
 type handler struct {
@@ -44,6 +49,10 @@ func New(st *store.Store, cfg Config) http.Handler {
 	mux.HandleFunc("GET /raw", h.auth(h.getRaw))
 	mux.HandleFunc("PUT /raw", h.auth(h.putRaw))
 	mux.HandleFunc("GET /ws", h.ws)
+
+	if cfg.MCPClient != nil {
+		mux.HandleFunc("/mcp", h.auth(mcp.Handler(cfg.MCPClient)))
+	}
 
 	if cfg.ServeUI && cfg.WebFS != nil {
 		fs := http.FileServer(http.FS(cfg.WebFS))

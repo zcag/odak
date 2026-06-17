@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"os"
 
-	"github.com/zcag/odak/internal/mcp"
 	"github.com/zcag/odak/internal/tui"
 )
 
@@ -64,8 +63,6 @@ func Run(args []string, webFS fs.FS, version string) {
 		runMove(args[1:])
 	case "show":
 		runShow(args[1:])
-	case "mcp":
-		mcp.Run(newClient())
 	case "help", "--help", "-h":
 		usage()
 	default:
@@ -100,8 +97,9 @@ Client (reads ~/.config/odak/client or ODAK_ENDPOINT / ODAK_TOKEN):
 
 Sections: Focus Today Next Backlog Someday Recurring Inbox
 
-MCP server (Model Context Protocol over stdio):
-  odak mcp                             start MCP server (tools: list_todos, add_todo, toggle_done, delete_todo, move_todo, list_sections)
+MCP server (Model Context Protocol over Streamable HTTP):
+  served by 'odak --server' at /mcp (bearer-authed, same API key)
+  register: claude mcp add --transport http odak http://<host>:<port>/mcp --header "Authorization: Bearer <key>"
 `)
 
 }

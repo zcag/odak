@@ -1,12 +1,13 @@
-// Package mcp implements a Model Context Protocol server over stdio (JSON-RPC 2.0).
+// Package mcp implements a Model Context Protocol server (JSON-RPC 2.0) over
+// the Streamable HTTP transport. It is mounted on the odak API server and talks
+// to the store through a loopback API client, reusing all the REST handler logic.
 package mcp
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
+	"net/http"
 	"strings"
 
 	"github.com/zcag/odak/internal/client"
@@ -27,12 +28,10 @@ type rpcErr struct {
 	Message string `json:"message"`
 }
 
-func respond(enc *json.Encoder, id any, result any) {
-	enc.Encode(msg{JSONRPC: "2.0", ID: id, Result: result})
-}
+func result(id any, r any) *msg { return &msg{JSONRPC: "2.0", ID: id, Result: r} }
 
-func errResp(enc *json.Encoder, id any, code int, text string) {
-	enc.Encode(msg{JSONRPC: "2.0", ID: id, Error: &rpcErr{Code: code, Message: text}})
+func errMsg(id any, code int, text string) *msg {
+	return &msg{JSONRPC: "2.0", ID: id, Error: &rpcErr{Code: code, Message: text}}
 }
 
 type toolDef struct {
@@ -201,7 +200,9 @@ func tagSlice(v any) []string {
 	return tags
 }
 
-func handle(enc *json.Encoder, c *client.Client, req msg) {
+// handle processes one JSON-RPC request and returns the response, or nil for
+// notifications (which get no reply).
+func handle(c *client.Client, req msg) *msg {
 	// parse params: tools/call wraps args in {"name":..., "arguments":{...}}
 	var callParams struct {
 		Name      string         `json:"name"`
@@ -228,17 +229,24 @@ func handle(enc *json.Encoder, c *client.Client, req msg) {
 
 	switch req.Method {
 	case "initialize":
-		respond(enc, req.ID, map[string]any{
-			"protocolVersion": "2024-11-05",
+		ver := "2025-06-18"
+		var p struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		if json.Unmarshal(req.Params, &p) == nil && p.ProtocolVersion != "" {
+			ver = p.ProtocolVersion // echo the client's requested version
+		}
+		return result(req.ID, map[string]any{
+			"protocolVersion": ver,
 			"serverInfo":      map[string]any{"name": "odak", "version": "1.0"},
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 		})
 
 	case "notifications/initialized":
-		// no response
+		return nil // no response
 
 	case "tools/list":
-		respond(enc, req.ID, map[string]any{"tools": tools})
+		return result(req.ID, map[string]any{"tools": tools})
 
 	case "tools/call":
 		name := callParams.Name
@@ -250,23 +258,21 @@ func handle(enc *json.Encoder, c *client.Client, req msg) {
 		case "list_todos":
 			items, err := c.List(str("section"), str("tag"), str("parent_id"))
 			if err != nil {
-				errResp(enc, req.ID, -32000, err.Error())
-				return
+				return errMsg(req.ID, -32000, err.Error())
 			}
-			respond(enc, req.ID, jsonText(items))
+			return result(req.ID, jsonText(items))
 
 		case "get_todo":
 			item, err := c.Get(str("id"))
 			if err != nil {
-				errResp(enc, req.ID, -32000, err.Error())
-				return
+				return errMsg(req.ID, -32000, err.Error())
 			}
-			respond(enc, req.ID, jsonText(item))
+			return result(req.ID, jsonText(item))
 
 		case "add_todo":
 			item := &model.Item{
 				Text:     str("text"),
-				Section:  str("section"),
+				Section:  model.Section(str("section")),
 				Deadline: str("deadline"),
 				Trigger:  str("trigger"),
 				ParentID: str("parent_id"),
@@ -280,10 +286,9 @@ func handle(enc *json.Encoder, c *client.Client, req msg) {
 			item.Tags = tagSlice(params["tags"])
 			created, err := c.Create(item)
 			if err != nil {
-				errResp(enc, req.ID, -32000, err.Error())
-				return
+				return errMsg(req.ID, -32000, err.Error())
 			}
-			respond(enc, req.ID, jsonText(created))
+			return result(req.ID, jsonText(created))
 
 		case "edit_todo":
 			patch := &model.Item{}
@@ -307,93 +312,99 @@ func handle(enc *json.Encoder, c *client.Client, req msg) {
 			}
 			item, err := c.Update(str("id"), patch)
 			if err != nil {
-				errResp(enc, req.ID, -32000, err.Error())
-				return
+				return errMsg(req.ID, -32000, err.Error())
 			}
-			respond(enc, req.ID, jsonText(item))
+			return result(req.ID, jsonText(item))
 
 		case "toggle_done":
 			item, err := c.ToggleDone(str("id"))
 			if err != nil {
-				errResp(enc, req.ID, -32000, err.Error())
-				return
+				return errMsg(req.ID, -32000, err.Error())
 			}
-			respond(enc, req.ID, jsonText(item))
+			return result(req.ID, jsonText(item))
 
 		case "delete_todo":
 			if err := c.Delete(str("id")); err != nil {
-				errResp(enc, req.ID, -32000, err.Error())
-				return
+				return errMsg(req.ID, -32000, err.Error())
 			}
-			respond(enc, req.ID, text("deleted"))
+			return result(req.ID, text("deleted"))
 
 		case "move_todo":
-			item, err := c.Move(str("id"), str("section"))
+			item, err := c.Move(str("id"), model.Section(str("section")))
 			if err != nil {
-				errResp(enc, req.ID, -32000, err.Error())
-				return
+				return errMsg(req.ID, -32000, err.Error())
 			}
-			respond(enc, req.ID, jsonText(item))
+			return result(req.ID, jsonText(item))
 
 		case "reorder_todos":
 			ids := strSlice(params["ids"])
 			if err := c.Reorder(str("section"), ids); err != nil {
-				errResp(enc, req.ID, -32000, err.Error())
-				return
+				return errMsg(req.ID, -32000, err.Error())
 			}
-			respond(enc, req.ID, text("reordered"))
+			return result(req.ID, text("reordered"))
 
 		case "list_sections":
 			sections, err := c.Sections()
 			if err != nil {
-				errResp(enc, req.ID, -32000, err.Error())
-				return
+				return errMsg(req.ID, -32000, err.Error())
 			}
-			respond(enc, req.ID, jsonText(sections))
+			return result(req.ID, jsonText(sections))
 
 		case "get_raw":
 			content, err := c.GetRaw()
 			if err != nil {
-				errResp(enc, req.ID, -32000, err.Error())
-				return
+				return errMsg(req.ID, -32000, err.Error())
 			}
-			respond(enc, req.ID, text(content))
+			return result(req.ID, text(content))
 
 		case "put_raw":
 			if err := c.PutRaw(str("content")); err != nil {
-				errResp(enc, req.ID, -32000, err.Error())
-				return
+				return errMsg(req.ID, -32000, err.Error())
 			}
-			respond(enc, req.ID, text("ok"))
+			return result(req.ID, text("ok"))
 
 		default:
-			errResp(enc, req.ID, -32601, fmt.Sprintf("unknown tool: %s", name))
+			return errMsg(req.ID, -32601, fmt.Sprintf("unknown tool: %s", name))
 		}
 
 	default:
 		if req.ID != nil {
-			errResp(enc, req.ID, -32601, fmt.Sprintf("method not found: %s", req.Method))
+			return errMsg(req.ID, -32601, fmt.Sprintf("method not found: %s", req.Method))
 		}
+		return nil
 	}
 }
 
-func Run(c *client.Client) {
-	enc := json.NewEncoder(os.Stdout)
-	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 4*1024*1024), 4*1024*1024)
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
+// Handler serves the MCP Streamable HTTP transport. POST carries a JSON-RPC
+// request and gets a JSON response (or 202 for notifications); odak has no
+// server-initiated messages, so GET (the optional SSE stream) returns 405.
+func Handler(c *client.Client) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", "POST")
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		body, err := io.ReadAll(io.LimitReader(r.Body, 8*1024*1024))
+		if err != nil {
+			writeRPC(w, errMsg(nil, -32700, "read error"))
+			return
 		}
 		var req msg
-		if err := json.Unmarshal(line, &req); err != nil {
-			errResp(enc, nil, -32700, "parse error")
-			continue
+		if err := json.Unmarshal(body, &req); err != nil {
+			writeRPC(w, errMsg(nil, -32700, "parse error"))
+			return
 		}
-		handle(enc, c, req)
+		resp := handle(c, req)
+		if resp == nil {
+			w.WriteHeader(http.StatusAccepted) // notification: no reply
+			return
+		}
+		writeRPC(w, resp)
 	}
-	if err := scanner.Err(); err != nil && err != io.EOF {
-		fmt.Fprintln(os.Stderr, "odak mcp:", err)
-	}
+}
+
+func writeRPC(w http.ResponseWriter, m *msg) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(m)
 }

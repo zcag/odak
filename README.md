@@ -156,30 +156,32 @@ The file is the source of truth — edit it directly and all clients update with
 
 Use odak as a tool inside Claude Code or any MCP-compatible AI client.
 
-```sh
-odak mcp   # start MCP server (stdio / JSON-RPC 2.0)
-```
+The MCP server is served by `odak --server` itself over the Streamable HTTP
+transport at `/mcp`, behind the same bearer API key as the REST API — there is
+no separate process to launch.
 
 Register it with Claude Code (user scope — available in every project):
 
 ```sh
-claude mcp add odak -s user -- odak mcp
+claude mcp add --transport http odak http://<host>:<port>/mcp \
+  --header "Authorization: Bearer <api-key>"
 ```
 
-For other MCP clients, point them at the `odak mcp` command over stdio:
+For other MCP clients, point them at the HTTP endpoint with the bearer header:
 
 ```json
 {
   "mcpServers": {
     "odak": {
-      "command": "odak",
-      "args": ["mcp"]
+      "type": "http",
+      "url": "http://<host>:<port>/mcp",
+      "headers": { "Authorization": "Bearer <api-key>" }
     }
   }
 }
 ```
 
-The server reads client config from the same env vars / `~/.config/odak/client` file as the CLI. Available tools:
+Available tools:
 
 | Tool | Description |
 |------|-------------|

@@ -10,6 +10,7 @@ import (
 
 	"github.com/zcag/odak/config"
 	"github.com/zcag/odak/internal/api"
+	"github.com/zcag/odak/internal/client"
 	"github.com/zcag/odak/internal/store"
 )
 
@@ -36,12 +37,15 @@ func runServer(args []string, webFS fs.FS) {
 	}
 
 	st := store.New(*file, *backupDir)
+	// Loopback client backs the MCP endpoint so its tools reuse the REST handlers.
+	loopback := client.New("http://localhost:"+*port, *apiKey)
 	h := api.New(st, api.Config{
-		APIKey:   *apiKey,
-		User:     *user,
-		Password: *password,
-		ServeUI:  *ui,
-		WebFS:    webFS,
+		APIKey:    *apiKey,
+		User:      *user,
+		Password:  *password,
+		ServeUI:   *ui,
+		WebFS:     webFS,
+		MCPClient: loopback,
 	})
 
 	addr := ":" + *port
