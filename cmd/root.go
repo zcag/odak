@@ -86,6 +86,12 @@ Server:
   --port        listen port (default 8761, or ODAK_PORT)
   --backup-dir  backup directory (or ODAK_BACKUP_DIR)
 
+  MCP OAuth (optional, env-only; lets Claude.ai / ChatGPT "Connect" via WorkOS
+  AuthKit alongside the static API key — all unset ⇒ OAuth off):
+  ODAK_OAUTH_ISSUER         AuthKit domain, e.g. https://x.authkit.app
+  ODAK_MCP_RESOURCE         public /mcp URL (OAuth audience), e.g. https://odak.cagdas.io/mcp
+  ODAK_OAUTH_ALLOWED_EMAIL  comma-separated email allowlist (single-user gate)
+
 Client (reads ~/.config/odak/client or ODAK_ENDPOINT / ODAK_TOKEN):
   odak list [section] [t:TAG ...] [t:-TAG ...] [--all]   list todos (done hidden unless --all)
   odak t:TAG                           shorthand for: odak list t:TAG

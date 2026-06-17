@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io/fs"
 	"net/http"
+	"strings"
 
 	apiclient "github.com/zcag/odak/internal/client"
 	"github.com/zcag/odak/internal/mcp"
@@ -19,6 +20,10 @@ type Config struct {
 	// MCPClient, if set, mounts the MCP endpoint at /mcp. It is a loopback API
 	// client so MCP tool calls reuse the REST handlers' filtering/validation.
 	MCPClient *apiclient.Client
+	// OAuth, if set, lets /mcp also accept WorkOS AuthKit JWTs (the Claude.ai /
+	// ChatGPT "Connect" flow) alongside the static APIKey, and serves the RFC 9728
+	// Protected Resource Metadata. Nil ⇒ /mcp stays APIKey-only.
+	OAuth *MCPOAuth
 }
 
 type handler struct {
@@ -51,7 +56,13 @@ func New(st *store.Store, cfg Config) http.Handler {
 	mux.HandleFunc("GET /ws", h.ws)
 
 	if cfg.MCPClient != nil {
-		mux.HandleFunc("/mcp", h.auth(mcp.Handler(cfg.MCPClient)))
+		mux.HandleFunc("/mcp", h.mcpAuth(mcp.Handler(cfg.MCPClient)))
+		// RFC 9728 discovery for the "Connect" flow. Public + static; Claude probes
+		// both the root and the path-scoped variant. Only mounted when OAuth is on.
+		if cfg.OAuth != nil {
+			mux.HandleFunc("GET "+wellKnownPRMPath, h.servePRM)
+			mux.HandleFunc("GET "+wellKnownPRMPath+"/mcp", h.servePRM)
+		}
 	}
 
 	if cfg.ServeUI && cfg.WebFS != nil {
@@ -65,6 +76,28 @@ func New(st *store.Store, cfg Config) http.Handler {
 	}
 
 	return mux
+}
+
+// mcpAuth guards /mcp. It accepts the static APIKey (TUI/CLI/open-webui) and,
+// when OAuth is configured, a valid WorkOS AuthKit JWT (Claude.ai / ChatGPT
+// Connect). On failure with OAuth on, it emits a WWW-Authenticate challenge so
+// MCP clients can discover the authorization server via the PRM.
+func (h *handler) mcpAuth(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		authz := r.Header.Get("Authorization")
+		if h.cfg.APIKey != "" && authz == "Bearer "+h.cfg.APIKey {
+			next(w, r)
+			return
+		}
+		if h.cfg.OAuth != nil {
+			if tok, ok := strings.CutPrefix(authz, "Bearer "); ok && h.cfg.OAuth.verify(tok) {
+				next(w, r)
+				return
+			}
+			w.Header().Set("WWW-Authenticate", h.cfg.OAuth.challenge())
+		}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}
 }
 
 func (h *handler) auth(next http.HandlerFunc) http.HandlerFunc {

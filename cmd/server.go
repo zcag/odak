@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"io/fs"
@@ -39,6 +40,8 @@ func runServer(args []string, webFS fs.FS) {
 	st := store.New(*file, *backupDir)
 	// Loopback client backs the MCP endpoint so its tools reuse the REST handlers.
 	loopback := client.New("http://localhost:"+*port, *apiKey)
+	// OAuth is nil unless ODAK_OAUTH_ISSUER + ODAK_MCP_RESOURCE are set.
+	oauth := api.LoadMCPOAuth(context.Background(), cfg.OAuthIssuer, cfg.MCPResource, cfg.OAuthAllowedEmails)
 	h := api.New(st, api.Config{
 		APIKey:    *apiKey,
 		User:      *user,
@@ -46,6 +49,7 @@ func runServer(args []string, webFS fs.FS) {
 		ServeUI:   *ui,
 		WebFS:     webFS,
 		MCPClient: loopback,
+		OAuth:     oauth,
 	})
 
 	addr := ":" + *port

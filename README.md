@@ -197,6 +197,26 @@ Available tools:
 | `get_raw` | Get the raw Markdown content of the file |
 | `put_raw` | Overwrite the entire file with raw Markdown |
 
+### OAuth (hosted connectors)
+
+To connect odak from a hosted client that can't carry a static header — the
+Claude.ai / ChatGPT **"Connect"** flow — point `/mcp` at a [WorkOS AuthKit](https://workos.com/)
+authorization server. With it configured, `/mcp` accepts **either** the static
+API key (CLI/TUI/local clients) **or** a valid AuthKit-issued JWT, and serves
+the RFC 9728 Protected Resource Metadata at
+`/.well-known/oauth-protected-resource` so hosts can discover the auth server.
+
+Env-only, all unset ⇒ OAuth off (`/mcp` stays API-key-only):
+
+```sh
+export ODAK_OAUTH_ISSUER=https://your-app.authkit.app   # AuthKit domain; JWKS at {issuer}/oauth2/jwks
+export ODAK_MCP_RESOURCE=https://odak.example.com/mcp    # this endpoint's public URL = the OAuth audience
+export ODAK_OAUTH_ALLOWED_EMAIL=you@example.com          # optional email allowlist (single-user gate)
+```
+
+Tokens are validated against the JWKS, enforcing issuer, audience (`== ODAK_MCP_RESOURCE`,
+RFC 8707 replay defense), signature, and the optional email allowlist.
+
 ---
 
 ## Raw API

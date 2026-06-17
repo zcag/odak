@@ -13,6 +13,11 @@ type Server struct {
 	Password  string
 	Port      string
 	BackupDir string
+	// OAuth (WorkOS AuthKit) for the MCP endpoint. All empty ⇒ /mcp stays
+	// APIKey-only and advertises no OAuth.
+	OAuthIssuer        string // AuthKit domain, e.g. https://x.authkit.app
+	MCPResource        string // public /mcp URL, the OAuth audience
+	OAuthAllowedEmails string // comma-separated email allowlist (single-user gate)
 }
 
 type Client struct {
@@ -31,6 +36,10 @@ func LoadServer() Server {
 		Password:  env("ODAK_PASSWORD", ""),
 		Port:      env("ODAK_PORT", DefaultServerPort()),
 		BackupDir: env("ODAK_BACKUP_DIR", ""),
+
+		OAuthIssuer:        env("ODAK_OAUTH_ISSUER", ""),
+		MCPResource:        env("ODAK_MCP_RESOURCE", ""),
+		OAuthAllowedEmails: env("ODAK_OAUTH_ALLOWED_EMAIL", ""),
 	}
 }
 
