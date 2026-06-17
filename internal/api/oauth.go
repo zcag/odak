@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MicahParks/keyfunc/v3"
@@ -33,6 +34,9 @@ type MCPOAuth struct {
 	// issuer is accepted; non-empty ⇒ a token passes only if its sub OR email is in
 	// the set. Emails are stored lowercased; subs (opaque WorkOS ids) verbatim.
 	allowed map[string]bool
+	// logIdentity surfaces the first verified token's identity once, so the operator
+	// can pin the allowlist to the exact claim the AuthKit token carries.
+	logIdentity sync.Once
 }
 
 // LoadMCPOAuth builds the OAuth config, or returns nil when issuer/resource are
@@ -85,11 +89,16 @@ func (o *MCPOAuth) verify(token string) bool {
 	if err != nil || !tok.Valid {
 		return false
 	}
+	sub, _ := claims["sub"].(string)
+	email, _ := claims["email"].(string)
+	// Surface the real identity once so the operator can pin the allowlist to the
+	// exact claim the AuthKit access token actually carries.
+	o.logIdentity.Do(func() {
+		log.Printf("odak: oauth first verified-token identity (sub=%q email=%q)", sub, email)
+	})
 	if len(o.allowed) == 0 {
 		return true
 	}
-	sub, _ := claims["sub"].(string)
-	email, _ := claims["email"].(string)
 	if (sub != "" && o.allowed[sub]) || (email != "" && o.allowed[strings.ToLower(email)]) {
 		return true
 	}
