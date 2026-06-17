@@ -29,14 +29,19 @@ type MCPOAuth struct {
 	issuer   string // AuthKit domain, e.g. https://x.authkit.app
 	resource string // the aud we enforce (this MCP endpoint's public URL)
 	keyfunc  keyfunc.Keyfunc
-	allowed  map[string]bool // allowed email claims; empty ⇒ any valid token from the issuer
+	// allowed gates the `sub` and `email` claims. Empty ⇒ any valid token from the
+	// issuer is accepted; non-empty ⇒ a token passes only if its sub OR email is in
+	// the set. Emails are stored lowercased; subs (opaque WorkOS ids) verbatim.
+	allowed map[string]bool
 }
 
 // LoadMCPOAuth builds the OAuth config, or returns nil when issuer/resource are
 // empty (disabled). ctx bounds the background JWKS refresh goroutine. allowedEmails
-// is a comma-separated allowlist of the `email` claim — odak is single-user, so we
-// gate on identity rather than trust every account the AuthKit app might hold.
-func LoadMCPOAuth(ctx context.Context, issuer, resource, allowedEmails string) *MCPOAuth {
+// and allowedSubs are comma-separated allowlists of the `email` / `sub` claims —
+// odak is single-user, so we gate on identity rather than trust every account the
+// shared AuthKit app might hold. Which claim an AuthKit access token actually
+// carries varies, so we accept a match on either.
+func LoadMCPOAuth(ctx context.Context, issuer, resource, allowedEmails, allowedSubs string) *MCPOAuth {
 	issuer = strings.TrimRight(strings.TrimSpace(issuer), "/")
 	resource = strings.TrimSpace(resource)
 	if issuer == "" || resource == "" {
@@ -53,13 +58,22 @@ func LoadMCPOAuth(ctx context.Context, issuer, resource, allowedEmails string) *
 			allowed[e] = true
 		}
 	}
-	log.Printf("odak: mcp oauth enabled (issuer=%s resource=%s allowlist=%d)", issuer, resource, len(allowed))
+	for _, s := range strings.Split(allowedSubs, ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			allowed[s] = true
+		}
+	}
+	gate := "open (any valid token)"
+	if len(allowed) > 0 {
+		gate = "allowlist"
+	}
+	log.Printf("odak: mcp oauth enabled (issuer=%s resource=%s gate=%s)", issuer, resource, gate)
 	return &MCPOAuth{issuer: issuer, resource: resource, keyfunc: kf, allowed: allowed}
 }
 
 // verify validates a WorkOS access token against the JWKS, enforcing issuer,
 // audience (== resource; RFC 8707 replay defense), signing alg, a small clock-skew
-// leeway, and the optional email allowlist. Returns true when the token is good.
+// leeway, and the optional identity allowlist. Returns true when the token is good.
 func (o *MCPOAuth) verify(token string) bool {
 	claims := jwt.MapClaims{}
 	tok, err := jwt.ParseWithClaims(token, claims, o.keyfunc.Keyfunc,
@@ -71,13 +85,18 @@ func (o *MCPOAuth) verify(token string) bool {
 	if err != nil || !tok.Valid {
 		return false
 	}
-	if len(o.allowed) > 0 {
-		email, _ := claims["email"].(string)
-		if !o.allowed[strings.ToLower(email)] {
-			return false
-		}
+	if len(o.allowed) == 0 {
+		return true
 	}
-	return true
+	sub, _ := claims["sub"].(string)
+	email, _ := claims["email"].(string)
+	if (sub != "" && o.allowed[sub]) || (email != "" && o.allowed[strings.ToLower(email)]) {
+		return true
+	}
+	// Logged so the operator can read the real identity off the journal and pin it
+	// in ODAK_OAUTH_ALLOWED_SUB / _EMAIL (claim presence varies by AuthKit config).
+	log.Printf("odak: oauth token rejected — identity not allowlisted (sub=%q email=%q)", sub, email)
+	return false
 }
 
 // prmJSON is the Protected Resource Metadata document (RFC 9728). offline_access

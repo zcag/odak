@@ -17,7 +17,8 @@ type Server struct {
 	// APIKey-only and advertises no OAuth.
 	OAuthIssuer        string // AuthKit domain, e.g. https://x.authkit.app
 	MCPResource        string // public /mcp URL, the OAuth audience
-	OAuthAllowedEmails string // comma-separated email allowlist (single-user gate)
+	OAuthAllowedEmails string // comma-separated email-claim allowlist (single-user gate)
+	OAuthAllowedSubs   string // comma-separated sub-claim allowlist (single-user gate)
 }
 
 type Client struct {
@@ -40,6 +41,7 @@ func LoadServer() Server {
 		OAuthIssuer:        env("ODAK_OAUTH_ISSUER", ""),
 		MCPResource:        env("ODAK_MCP_RESOURCE", ""),
 		OAuthAllowedEmails: env("ODAK_OAUTH_ALLOWED_EMAIL", ""),
+		OAuthAllowedSubs:   env("ODAK_OAUTH_ALLOWED_SUB", ""),
 	}
 }
 

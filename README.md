@@ -211,11 +211,14 @@ Env-only, all unset ⇒ OAuth off (`/mcp` stays API-key-only):
 ```sh
 export ODAK_OAUTH_ISSUER=https://your-app.authkit.app   # AuthKit domain; JWKS at {issuer}/oauth2/jwks
 export ODAK_MCP_RESOURCE=https://odak.example.com/mcp    # this endpoint's public URL = the OAuth audience
-export ODAK_OAUTH_ALLOWED_EMAIL=you@example.com          # optional email allowlist (single-user gate)
+export ODAK_OAUTH_ALLOWED_EMAIL=you@example.com          # optional email-claim allowlist (single-user gate)
+export ODAK_OAUTH_ALLOWED_SUB=user_123                   # optional sub-claim allowlist (single-user gate)
 ```
 
 Tokens are validated against the JWKS, enforcing issuer, audience (`== ODAK_MCP_RESOURCE`,
-RFC 8707 replay defense), signature, and the optional email allowlist.
+RFC 8707 replay defense), signature, and the optional allowlist — a token passes if its
+`sub` **or** `email` claim is listed (which claim an AuthKit access token carries varies,
+so set whichever you can confirm; a rejected token's `sub`/`email` is logged so you can pin it).
 
 ---
 

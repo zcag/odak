@@ -90,7 +90,8 @@ Server:
   AuthKit alongside the static API key — all unset ⇒ OAuth off):
   ODAK_OAUTH_ISSUER         AuthKit domain, e.g. https://x.authkit.app
   ODAK_MCP_RESOURCE         public /mcp URL (OAuth audience), e.g. https://odak.cagdas.io/mcp
-  ODAK_OAUTH_ALLOWED_EMAIL  comma-separated email allowlist (single-user gate)
+  ODAK_OAUTH_ALLOWED_EMAIL  comma-separated email-claim allowlist (single-user gate)
+  ODAK_OAUTH_ALLOWED_SUB    comma-separated sub-claim allowlist (single-user gate)
 
 Client (reads ~/.config/odak/client or ODAK_ENDPOINT / ODAK_TOKEN):
   odak list [section] [t:TAG ...] [t:-TAG ...] [--all]   list todos (done hidden unless --all)
