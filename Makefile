@@ -1,6 +1,7 @@
 BINARY    := odak
 ARCHER    := archer
 MARKO     := marko
+HORNET    := hornet
 REMOTE_USER := cagdas
 REMOTE_DIR  := /home/$(REMOTE_USER)/odak
 SERVICE     := odak
@@ -13,7 +14,7 @@ _DIRTY := $(shell git diff --quiet && git diff --cached --quiet || echo +dirty)
 VERSION := $(if $(_TAG),$(_TAG)+$(_REV)-$(_HASH)$(_DIRTY),v0+$(_REV)-$(_HASH)$(_DIRTY))
 LDFLAGS := -ldflags "-s -w -X main.Version=$(VERSION)"
 
-.PHONY: build web-build build-archer deploy install-service logs status restart clean
+.PHONY: build web-build build-linux build-darwin deploy install-service logs status restart clean
 
 build: web-build
 	go build $(LDFLAGS) -o bin/$(BINARY) .
@@ -24,10 +25,13 @@ build: web-build
 web-build:
 	cd web && npm install --silent && npm run build
 
-build-archer:
+build-linux:
 	GOOS=linux GOARCH=amd64 go build $(LDFLAGS) -o bin/$(BINARY)-linux .
 
-deploy: web-build build-archer
+build-darwin:
+	GOOS=darwin GOARCH=arm64 go build $(LDFLAGS) -o bin/$(BINARY)-darwin .
+
+deploy: web-build build-linux build-darwin
 	go build $(LDFLAGS) -o bin/$(BINARY) .
 	@mkdir -p $(INSTALL_DIR)
 	@cp bin/$(BINARY) $(INSTALL_DIR)/$(BINARY).new && mv -f $(INSTALL_DIR)/$(BINARY).new $(INSTALL_DIR)/$(BINARY)
@@ -35,7 +39,8 @@ deploy: web-build build-archer
 	rsync -av bin/$(BINARY)-linux $(REMOTE_USER)@$(ARCHER):$(REMOTE_DIR)/$(BINARY)
 	ssh $(REMOTE_USER)@$(ARCHER) "systemctl --user restart $(SERVICE)"
 	rsync -av bin/$(BINARY)-linux $(REMOTE_USER)@$(MARKO):~/.local/bin/$(BINARY)
-	@echo "deployed to $(ARCHER) + $(MARKO) + installed locally  [$(VERSION)]"
+	rsync -av bin/$(BINARY)-darwin $(REMOTE_USER)@$(HORNET):~/.local/bin/$(BINARY)
+	@echo "deployed to $(ARCHER) + $(MARKO) + $(HORNET) + installed locally  [$(VERSION)]"
 
 # First-time setup: copy and enable the systemd service.
 # Fill in deploy/odak.service from the template before running this.

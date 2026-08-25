@@ -44,7 +44,7 @@ token=your-api-key
 git clone https://github.com/zcag/odak
 cd odak
 make build        # local binary → ~/.local/bin/odak
-make deploy       # cross-compile + push to server via rsync + systemd restart
+make deploy       # cross-compile + push to archer (server, systemd restart), marko, hornet
 ```
 
 ---
