@@ -595,8 +595,9 @@
   function parseAdd(raw) {
     let text = raw.trim(), urgent = false, tags = [], deadline = null, section = null
     if (/^!\s/.test(text)) { urgent = true; text = text.replace(/^!\s*/, '') }
-    text = text.replace(/#(\S+)/g, (_, t) => { tags.push(t); return '' })
-    text = text.replace(/\bd:(\S+)/g, (_, d) => { deadline = d; return '' })
+    // tokens must start a word — a '#' or 'd:' inside a URL is not a tag/deadline
+    text = text.replace(/(^|\s)#(\S+)/g, (_, pre, t) => { tags.push(t); return pre })
+    text = text.replace(/(^|\s)d:(\S+)/g, (_, pre, d) => { deadline = d; return pre })
     // /name → section, by case-insensitive prefix match against existing sections (first wins)
     text = text.replace(/(^|\s)\/(\S+)/g, (m, pre, name) => {
       if (section) return m
@@ -737,6 +738,20 @@
 
   /* ── helpers ──────────────────────────────────────── */
   const PALETTE = ['#6b7db8','#5a9970','#8a7d4a','#7a6a9a','#4a8799','#8a6a50','#5a7a8a','#8a6070','#6a8a6a']
+  // split text into plain / link segments; trailing punctuation stays outside the link
+  const urlRe = /https?:\/\/[^\s<>"']+/g
+  function linkify(text) {
+    const out = []; let last = 0
+    for (const m of text.matchAll(urlRe)) {
+      let url = m[0]; const tail = url.match(/[.,;:!?)\]]+$/)
+      if (tail) url = url.slice(0, -tail[0].length)
+      if (m.index > last) out.push({ text: text.slice(last, m.index) })
+      out.push({ text: url, url }); last = m.index + url.length
+    }
+    if (last < text.length) out.push({ text: text.slice(last) })
+    return out
+  }
+
   function tagColor(t) {
     let h = 0; for (const c of t) h = (h * 31 + c.charCodeAt(0)) >>> 0
     return PALETTE[h % PALETTE.length]
@@ -1368,6 +1383,8 @@
     cursor: text; word-break: break-word;
   }
   .item.is-done .item-text { color: var(--tx-done); text-decoration: line-through }
+  .item-text a { color: var(--accent); text-decoration: underline; text-underline-offset: 2px; text-decoration-color: color-mix(in srgb, var(--accent) 40%, transparent) }
+  .item-text a:hover { text-decoration-color: var(--accent) }
 
   /* edit mode: top box switches to editing the selected item */
   .add-box.editing { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg) }
@@ -1840,7 +1857,7 @@
 
                   <!-- Text + inline meta -->
                   <div class="content">
-                    <span class="item-text" on:dblclick={() => startEdit(item)}>{item.text}</span>
+                    <span class="item-text" on:dblclick={() => startEdit(item)}>{#each linkify(item.text) as seg}{#if seg.url}<a href={seg.url} target="_blank" rel="noopener" on:click|stopPropagation>{seg.text}</a>{:else}{seg.text}{/if}{/each}</span>
                     {#each (item.tags || []) as tag}
                       <span class="tag-il" style="color:{tagColor(tag)}">#<!--
                       -->{tag}</span>
