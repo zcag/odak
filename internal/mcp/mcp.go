@@ -83,18 +83,17 @@ var tools = []toolDef{
 	},
 	{
 		Name:        "edit_todo",
-		Description: "Update fields of an existing todo item. Only provided fields are changed.",
+		Description: "Update fields of an existing todo item. Only provided fields are changed. Editing changes the item's ID: use the id in the response for any further calls.",
 		InputSchema: map[string]any{
 			"type":     "object",
 			"required": []string{"id"},
 			"properties": map[string]any{
-				"id":        map[string]any{"type": "string", "description": "Item ID"},
-				"text":      map[string]any{"type": "string", "description": "New text"},
-				"urgent":    map[string]any{"type": "boolean", "description": "Mark as urgent"},
-				"deadline":  map[string]any{"type": "string", "description": "Deadline date (YYYY-MM-DD), empty string to clear"},
-				"trigger":   map[string]any{"type": "string", "description": "Wait/trigger date (YYYY-MM-DD), empty string to clear"},
-				"tags":      map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Replace tags list; bare names without the t: prefix (e.g. personal, work, infra)"},
-				"parent_id": map[string]any{"type": "string", "description": "Re-parent to this item ID, empty string to make top-level"},
+				"id":       map[string]any{"type": "string", "description": "Item ID"},
+				"text":     map[string]any{"type": "string", "description": "New text"},
+				"urgent":   map[string]any{"type": "boolean", "description": "Mark as urgent"},
+				"deadline": map[string]any{"type": "string", "description": "Deadline date (YYYY-MM-DD), empty string to clear"},
+				"trigger":  map[string]any{"type": "string", "description": "Wait/trigger date (YYYY-MM-DD), empty string to clear"},
+				"tags":     map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Replace tags list; bare names without the t: prefix (e.g. personal, work, infra)"},
 			},
 		},
 	},
@@ -291,24 +290,14 @@ func handle(c *client.Client, req msg) *msg {
 			return result(req.ID, jsonText(created))
 
 		case "edit_todo":
-			patch := &model.Item{}
-			if has("text") {
-				patch.Text = str("text")
-			}
-			if has("deadline") {
-				patch.Deadline = str("deadline")
-			}
-			if has("trigger") {
-				patch.Trigger = str("trigger")
-			}
-			if has("parent_id") {
-				patch.ParentID = str("parent_id")
-			}
-			if u, ok := params["urgent"].(bool); ok {
-				patch.Urgent = u
+			patch := map[string]any{}
+			for _, k := range []string{"text", "urgent", "deadline", "trigger"} {
+				if v, ok := params[k]; ok {
+					patch[k] = v
+				}
 			}
 			if has("tags") {
-				patch.Tags = tagSlice(params["tags"])
+				patch["tags"] = tagSlice(params["tags"])
 			}
 			item, err := c.Update(str("id"), patch)
 			if err != nil {

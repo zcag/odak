@@ -573,11 +573,12 @@ func (m Model) cmdEdit(id, text string, tags []string, urgent bool, deadline, se
 	}
 	patch := &client.ItemPatch{Text: text, Tags: tags, Urgent: urgent, Deadline: deadline}
 	return func() tea.Msg {
-		if _, err := m.cl.Patch(id, patch); err != nil {
+		item, err := m.cl.Patch(id, patch)
+		if err != nil {
 			return errMsg{err}
 		}
 		if section != "" {
-			if _, err := m.cl.Move(id, section); err != nil {
+			if _, err := m.cl.Move(item.ID, section); err != nil {
 				return errMsg{err}
 			}
 		}

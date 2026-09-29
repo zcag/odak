@@ -121,9 +121,19 @@ func parseContent(raw string, section model.Section, done bool, depth int) *mode
 	}
 	item.Text = strings.TrimSpace(allMetaRe.ReplaceAllString(raw, ""))
 
-	h := sha256.Sum256([]byte(raw))
-	item.ID = fmt.Sprintf("%x", h[:4])
+	item.ID = hashID(raw)
 	return item
+}
+
+func hashID(raw string) string {
+	h := sha256.Sum256([]byte(raw))
+	return fmt.Sprintf("%x", h[:4])
+}
+
+// ContentID is the ID the item will have once written: IDs hash the rendered
+// line, so any edit to text/tags/urgent/deadline/trigger changes it.
+func ContentID(item *model.Item) string {
+	return hashID(itemRe.FindStringSubmatch(renderItem(item))[3])
 }
 
 func (f *File) Flat() []*model.Item { return f.Items }

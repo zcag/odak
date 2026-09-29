@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -122,10 +121,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		item.Section = "Inbox"
 	}
 
-	// compute ID from content
-	raw := buildRaw(&item)
-	parsed := parser.ParseItem(raw, item.Section, item.Done, 0)
-	item.ID = parsed.ID
+	item.ID = parser.ContentID(&item)
 
 	added, err := h.store.AddItem(&item)
 	if err != nil {
@@ -153,7 +149,7 @@ func (h *handler) get(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	var patch model.Item
+	var patch model.Patch
 	if err := json.NewDecoder(r.Body).Decode(&patch); err != nil {
 		writeErr(w, 400, err.Error())
 		return
@@ -270,29 +266,4 @@ func (h *handler) putRaw(w http.ResponseWriter, r *http.Request) {
 	}
 	h.hub.Broadcast([]byte(`{"type":"reload"}`))
 	w.WriteHeader(204)
-}
-
-// buildRaw reconstructs the raw item line for ID computation.
-func buildRaw(item *model.Item) string {
-	var sb strings.Builder
-	for _, tag := range item.Tags {
-		sb.WriteString("[t:")
-		sb.WriteString(tag)
-		sb.WriteString("] ")
-	}
-	if item.Urgent {
-		sb.WriteString("[!] ")
-	}
-	if item.Deadline != "" {
-		sb.WriteString("[d:")
-		sb.WriteString(item.Deadline)
-		sb.WriteString("] ")
-	}
-	if item.Trigger != "" {
-		sb.WriteString("[w:")
-		sb.WriteString(item.Trigger)
-		sb.WriteString("] ")
-	}
-	sb.WriteString(item.Text)
-	return strings.TrimSpace(sb.String())
 }

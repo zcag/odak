@@ -90,7 +90,8 @@ func (c *Client) Get(id string) (*model.Item, error) {
 	return decode[*model.Item](resp)
 }
 
-func (c *Client) Update(id string, patch *model.Item) (*model.Item, error) {
+// Update sends a partial patch; only the keys present are changed (see model.Patch).
+func (c *Client) Update(id string, patch any) (*model.Item, error) {
 	resp, err := c.do("PATCH", "/todos/"+id, patch)
 	if err != nil {
 		return nil, err
@@ -98,9 +99,8 @@ func (c *Client) Update(id string, patch *model.Item) (*model.Item, error) {
 	return decode[*model.Item](resp)
 }
 
-// ItemPatch is the full edit payload — fields are sent explicitly so [] clears
-// tags and urgent:false unsets the flag. Server's update applies tags only when
-// non-nil and always overwrites urgent.
+// ItemPatch is the full edit payload: fields are sent explicitly so [] clears
+// tags and urgent:false unsets the flag.
 type ItemPatch struct {
 	Text     string   `json:"text"`
 	Tags     []string `json:"tags"`

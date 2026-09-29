@@ -166,35 +166,39 @@ func (s *Store) AddItem(item *model.Item) (*model.Item, error) {
 	return added, err
 }
 
-// UpdateItem finds by ID and applies patch fields.
-func (s *Store) UpdateItem(id string, patch *model.Item) (*model.Item, error) {
+// UpdateItem finds by ID and applies the set patch fields. The returned item
+// carries its new ID, since editing content changes it.
+func (s *Store) UpdateItem(id string, patch *model.Patch) (*model.Item, error) {
 	var updated *model.Item
 	err := s.Mutate(func(f *parser.File) error {
 		item := f.ByID(id)
 		if item == nil {
 			return fmt.Errorf("not found: %s", id)
 		}
-		if patch.Text != "" {
-			item.Text = patch.Text
-		}
-		if patch.Section != "" {
-			item.Section = patch.Section
+		if patch.Text != nil && *patch.Text != "" {
+			item.Text = *patch.Text
 		}
 		if patch.Tags != nil {
 			item.Tags = patch.Tags
 		}
-		if patch.Deadline != "" {
-			item.Deadline = patch.Deadline
+		if patch.Urgent != nil {
+			item.Urgent = *patch.Urgent
 		}
-		if patch.Trigger != "" {
-			item.Trigger = patch.Trigger
+		if patch.Deadline != nil {
+			item.Deadline = *patch.Deadline
 		}
-		item.Urgent = patch.Urgent
+		if patch.Trigger != nil {
+			item.Trigger = *patch.Trigger
+		}
 		item.MarkDirty()
 		updated = item
 		return nil
 	})
-	return updated, err
+	if err != nil {
+		return nil, err
+	}
+	updated.ID = parser.ContentID(updated)
+	return updated, nil
 }
 
 // ToggleDone flips the done state.
@@ -250,5 +254,9 @@ func (s *Store) MoveItem(id string, section model.Section) (*model.Item, error) 
 		result = item
 		return nil
 	})
-	return result, err
+	if err != nil {
+		return nil, err
+	}
+	result.ID = parser.ContentID(result) // re-render can normalize the line
+	return result, nil
 }

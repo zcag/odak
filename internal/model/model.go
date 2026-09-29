@@ -3,6 +3,16 @@ package model
 // Section is a free-form string matching whatever ## headings exist in the file.
 type Section = string
 
+// Patch is a partial update: nil fields are left alone, "" clears
+// deadline/trigger, and non-nil empty Tags clears tags.
+type Patch struct {
+	Text     *string  `json:"text"`
+	Tags     []string `json:"tags"`
+	Urgent   *bool    `json:"urgent"`
+	Deadline *string  `json:"deadline"`
+	Trigger  *string  `json:"trigger"`
+}
+
 type Item struct {
 	ID       string   `json:"id"`
 	Section  Section  `json:"section"`
